@@ -160,6 +160,20 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
     #login-role-badge{display:none;font-size:11px;font-weight:600;padding:3px 10px;border-radius:10px;
       margin-left:auto}
   </style>
+  <style>
+    #user-avatar-wrap{position:fixed;top:7px;right:12px;z-index:9999;font-family:'DM Sans',sans-serif;display:none}
+    #user-avatar-btn{width:40px;height:40px;border-radius:50%;background:#534AB7;display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:700;cursor:pointer;border:2.5px solid #fff;box-shadow:0 2px 10px rgba(83,74,183,.45);user-select:none;transition:box-shadow .15s,transform .15s}
+    #user-avatar-btn:hover{box-shadow:0 4px 16px rgba(83,74,183,.6);transform:scale(1.06)}
+    #user-dropdown{display:none;position:absolute;top:calc(100% + 8px);right:0;background:#fff;border:1px solid #e0e0da;border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.18);min-width:230px;overflow:hidden;z-index:9999}
+    #user-dropdown.open{display:block}
+    .dd-header{padding:16px;border-bottom:1px solid #f0f0ec;background:#fafaf8}
+    .dd-item{display:flex;align-items:center;gap:10px;padding:12px 16px;font-size:13px;color:#1a1a1a;cursor:pointer;transition:background .1s}
+    .dd-item:hover{background:#f5f4f0}
+    .dd-item.danger{color:#E24B4A}
+    .dd-item.danger:hover{background:#fff0f0}
+    .dd-sep{height:1px;background:#f0f0ec}
+    .dd-icon{width:20px;text-align:center;flex-shrink:0;font-size:15px}
+  </style>
 </head>
 <body>
   <!-- LOGIN SCREEN -->
@@ -184,19 +198,51 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
     </div>
   </div>
 
-  <!-- USER BADGE (shown when logged in) -->
-  <div id="user-badge" style="display:none;position:fixed;bottom:16px;right:16px;z-index:8000;
-    background:#fff;border:0.5px solid #e5e5e0;border-radius:10px;padding:8px 14px;
-    font-family:'DM Sans',sans-serif;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.1);
-    display:none;align-items:center;gap:10px">
-    <div>
-      <div id="badge-name" style="font-weight:600;color:#1a1a1a;font-size:12px"></div>
-      <div id="badge-role" style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.05em"></div>
+  <!-- USER AVATAR + DROPDOWN -->
+  <style>
+
+    #user-dropdown{display:none;position:absolute;top:calc(100% + 6px);right:0;
+      background:#fff;border:0.5px solid #e5e5e0;border-radius:12px;
+      box-shadow:0 8px 24px rgba(0,0,0,.12);min-width:200px;overflow:hidden}
+    #user-dropdown.open{display:block}
+    .dd-header{padding:14px 16px;border-bottom:0.5px solid #f0f0ec}
+    .dd-email{font-size:11px;color:#aaa;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .dd-item{display:flex;align-items:center;gap:10px;padding:10px 16px;
+      font-size:13px;color:#1a1a1a;cursor:pointer;transition:background .1s}
+    .dd-item:hover{background:#f8f8f5}
+    .dd-item.danger{color:#E24B4A}
+    .dd-item.danger:hover{background:#fff5f5}
+    .dd-sep{height:0.5px;background:#f0f0ec;margin:4px 0}
+    .dd-icon{font-size:16px;width:20px;text-align:center}
+  </style>
+
+  <div id="user-avatar-wrap">
+    <div id="user-avatar-btn" onclick="toggleDropdown()">AU</div>
+    <div id="user-dropdown">
+      <div class="dd-header">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <div id="dd-avatar" style="width:38px;height:38px;border-radius:50%;background:#534AB7;
+            display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-weight:600;flex-shrink:0">AU</div>
+          <div style="min-width:0">
+            <div id="dd-name" style="font-size:13px;font-weight:600;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Nombre</div>
+            <div id="dd-email" style="font-size:11px;color:#777;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px">correo@aliat.mx</div>
+          </div>
+        </div>
+        <div id="dd-role-badge" style="display:inline-block;font-size:10px;font-weight:600;
+          padding:2px 9px;border-radius:10px;background:#EEEDFE;color:#534AB7;letter-spacing:.03em"></div>
+      </div>
+      <div style="padding:4px 0">
+        <div class="dd-item" onclick="toggleDropdown()">
+          <span class="dd-icon">🗺️</span> Mapa Cobertura Aliat
+        </div>
+      </div>
+      <div class="dd-sep"></div>
+      <div style="padding:4px 0">
+        <div class="dd-item danger" onclick="doLogout()">
+          <span class="dd-icon">←</span> Cerrar sesión
+        </div>
+      </div>
     </div>
-    <button onclick="doLogout()" style="font-size:11px;font-weight:600;padding:4px 10px;
-      border:1px solid #e5e5e0;border-radius:6px;background:#fff;cursor:pointer;color:#555">
-      Salir
-    </button>
   </div>
 
 <div id="app">
@@ -1922,18 +1968,38 @@ async function doLogin() {
 
 // ── LOGOUT ─────────────────────────────────────────────────────────────
 async function doLogout() {
+  document.getElementById('user-dropdown').classList.remove('open');
   await auth.signOut();
+  document.getElementById('user-avatar-wrap').style.display = 'none';
+}
+
+function toggleDropdown() {
+  const dd = document.getElementById('user-dropdown');
+  dd.classList.toggle('open');
+  // Close on outside click
+  if(dd.classList.contains('open')) {
+    setTimeout(() => {
+      document.addEventListener('click', closeDropdown, {once:true});
+    }, 10);
+  }
+}
+
+function closeDropdown(e) {
+  const wrap = document.getElementById('user-avatar-wrap');
+  if(!wrap.contains(e.target)) {
+    document.getElementById('user-dropdown').classList.remove('open');
+  }
 }
 
 // ── AUTH STATE LISTENER ────────────────────────────────────────────────
 auth.onAuthStateChanged(async user => {
   const loginScreen = document.getElementById('login-screen');
-  const userBadge   = document.getElementById('user-badge');
+  
 
   if (!user) {
     // Not logged in — show login screen
     loginScreen.style.display = 'flex';
-    userBadge.style.display   = 'none';
+    document.getElementById('user-avatar-wrap').style.display = 'none';
     document.getElementById('login-btn').textContent = 'Entrar';
     document.getElementById('login-btn').disabled = false;
     return;
@@ -1947,9 +2013,15 @@ auth.onAuthStateChanged(async user => {
 
   // Hide login, show app
   loginScreen.style.display = 'none';
-  userBadge.style.display   = 'flex';
-  document.getElementById('badge-name').textContent = nombre;
-  document.getElementById('badge-role').textContent = ROLE_LABELS[rol] || rol;
+
+  // Populate avatar
+  document.getElementById('user-avatar-wrap').style.display = 'block';
+  const initials = nombre.trim().split(/\s+/).map(w=>w[0]).join('').substring(0,2).toUpperCase();
+  document.getElementById('user-avatar-btn').textContent = initials;
+  document.getElementById('dd-avatar').textContent       = initials;
+  document.getElementById('dd-name').textContent         = nombre;
+  document.getElementById('dd-email').textContent        = user.email;
+  document.getElementById('dd-role-badge').textContent   = ROLE_LABELS[rol] || rol;
 
   // Apply role restrictions
   applyRoleRestrictions(rol);
