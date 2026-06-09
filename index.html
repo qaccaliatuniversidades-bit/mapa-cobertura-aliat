@@ -112,8 +112,93 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
 }
 .leaflet-tooltip.tt-campus::before{display:none}
 </style>
+
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyASZa9HAV0y_I_U2Mvw6kIYOMYbO4Lh_dE",
+      authDomain: "mapa-cobertura-aliat.firebaseapp.com",
+      projectId: "mapa-cobertura-aliat",
+      storageBucket: "mapa-cobertura-aliat.firebasestorage.app",
+      messagingSenderId: "570802777666",
+      appId: "1:570802777666:web:d852f5056ce7cec7f247db",
+      databaseURL: "https://mapa-cobertura-aliat-default-rtdb.firebaseio.com"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db   = firebase.database();
+  </script>
+
+  <style>
+    #login-screen{
+      position:fixed;inset:0;background:#f5f4f0;display:flex;align-items:center;
+      justify-content:center;z-index:9999;font-family:'DM Sans',sans-serif;
+    }
+    #login-box{
+      background:#fff;border:0.5px solid #e5e5e0;border-radius:16px;
+      padding:36px 40px;width:360px;box-shadow:0 4px 24px rgba(0,0,0,.08);
+    }
+    #login-box .logo{display:flex;align-items:center;gap:10px;margin-bottom:24px}
+    #login-box .logo-icon{width:36px;height:36px;background:#1a1a2e;border-radius:9px;
+      display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:600}
+    #login-box h2{font-size:18px;font-weight:600;margin-bottom:4px;color:#1a1a1a}
+    #login-box p{font-size:12px;color:#888;margin-bottom:24px}
+    #login-box label{font-size:11px;font-weight:600;color:#555;text-transform:uppercase;
+      letter-spacing:.05em;display:block;margin-bottom:4px}
+    #login-box input{width:100%;padding:9px 12px;font-size:13px;border:1px solid #e5e5e0;
+      border-radius:8px;margin-bottom:14px;font-family:'DM Sans',sans-serif;outline:none;
+      box-sizing:border-box;color:#1a1a1a;background:#fff}
+    #login-box input:focus{border-color:#534AB7}
+    #login-btn{width:100%;padding:10px;background:#534AB7;color:#fff;border:none;
+      border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;
+      transition:opacity .15s}
+    #login-btn:hover{opacity:.88}
+    #login-error{font-size:12px;color:#E24B4A;margin-top:10px;text-align:center;min-height:18px}
+    #login-role-badge{display:none;font-size:11px;font-weight:600;padding:3px 10px;border-radius:10px;
+      margin-left:auto}
+  </style>
 </head>
 <body>
+  <!-- LOGIN SCREEN -->
+  <div id="login-screen">
+    <div id="login-box">
+      <div class="logo">
+        <div class="logo-icon">AU</div>
+        <div>
+          <div style="font-size:15px;font-weight:600;color:#1a1a1a">Mapa Cobertura Aliat</div>
+          <div style="font-size:11px;color:#aaa">Aliat Universidades</div>
+        </div>
+      </div>
+      <h2>Iniciar sesión</h2>
+      <p>Acceso restringido a usuarios autorizados</p>
+      <label>Correo electrónico</label>
+      <input type="email" id="login-email" placeholder="usuario@redaliat.mx" autocomplete="email">
+      <label>Contraseña</label>
+      <input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password"
+        onkeydown="if(event.key==='Enter') doLogin()">
+      <button id="login-btn" onclick="doLogin()">Entrar</button>
+      <div id="login-error"></div>
+    </div>
+  </div>
+
+  <!-- USER BADGE (shown when logged in) -->
+  <div id="user-badge" style="display:none;position:fixed;bottom:16px;right:16px;z-index:8000;
+    background:#fff;border:0.5px solid #e5e5e0;border-radius:10px;padding:8px 14px;
+    font-family:'DM Sans',sans-serif;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.1);
+    display:none;align-items:center;gap:10px">
+    <div>
+      <div id="badge-name" style="font-weight:600;color:#1a1a1a;font-size:12px"></div>
+      <div id="badge-role" style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.05em"></div>
+    </div>
+    <button onclick="doLogout()" style="font-size:11px;font-weight:600;padding:4px 10px;
+      border:1px solid #e5e5e0;border-radius:6px;background:#fff;cursor:pointer;color:#555">
+      Salir
+    </button>
+  </div>
+
 <div id="app">
   <div id="header">
     <div class="brand">
@@ -1811,6 +1896,75 @@ function setView(view) {
   sel.innerHTML = '<option value="">Todos los giros</option>';
   giros.forEach(g=>{ const o=document.createElement('option'); o.value=g; o.textContent=g; sel.appendChild(o); });
 })();
+</script>
+
+<script>
+// ── ROLES POR UID (espejo local de Realtime DB) ────────────────────────
+const ROLE_LABELS = {admin:'Administrador', supervisor:'Supervisor', analista:'Analista'};
+
+// ── LOGIN ──────────────────────────────────────────────────────────────
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  const errEl = document.getElementById('login-error');
+  const btn   = document.getElementById('login-btn');
+  errEl.textContent = '';
+  btn.textContent = 'Entrando...';
+  btn.disabled = true;
+  try {
+    await auth.signInWithEmailAndPassword(email, pass);
+  } catch(e) {
+    errEl.textContent = 'Correo o contraseña incorrectos.';
+    btn.textContent = 'Entrar';
+    btn.disabled = false;
+  }
+}
+
+// ── LOGOUT ─────────────────────────────────────────────────────────────
+async function doLogout() {
+  await auth.signOut();
+}
+
+// ── AUTH STATE LISTENER ────────────────────────────────────────────────
+auth.onAuthStateChanged(async user => {
+  const loginScreen = document.getElementById('login-screen');
+  const userBadge   = document.getElementById('user-badge');
+
+  if (!user) {
+    // Not logged in — show login screen
+    loginScreen.style.display = 'flex';
+    userBadge.style.display   = 'none';
+    document.getElementById('login-btn').textContent = 'Entrar';
+    document.getElementById('login-btn').disabled = false;
+    return;
+  }
+
+  // Logged in — get role from Realtime DB
+  const snap = await db.ref('roles/' + user.uid).get();
+  const data = snap.val() || {};
+  const rol  = data.rol || 'analista';
+  const nombre = data.nombre || user.email;
+
+  // Hide login, show app
+  loginScreen.style.display = 'none';
+  userBadge.style.display   = 'flex';
+  document.getElementById('badge-name').textContent = nombre;
+  document.getElementById('badge-role').textContent = ROLE_LABELS[rol] || rol;
+
+  // Apply role restrictions
+  applyRoleRestrictions(rol);
+});
+
+// ── ROLE RESTRICTIONS ──────────────────────────────────────────────────
+function applyRoleRestrictions(rol) {
+  // Analista: solo lectura — ocultar botón de carga de Excel
+  if (rol === 'analista') {
+    const excelBtn = document.getElementById('btn-excel-label');
+    if (excelBtn) excelBtn.style.display = 'none';
+  }
+  // Supervisor y Admin: acceso completo
+  // (aquí puedes agregar más restricciones por rol en el futuro)
+}
 </script>
 </body>
 </html>
