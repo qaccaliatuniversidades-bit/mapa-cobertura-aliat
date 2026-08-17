@@ -1424,7 +1424,7 @@ function abrirModalVerRuta(campusName) {
             <div style="margin-top:2px">Creada el ${fecha}</div>
           </div>
         </div>
-        <div id="mini-mapa-ruta" style="width:100%;height:200px;border-radius:10px;overflow:hidden;margin-bottom:12px;border:1px solid var(--border)"></div>
+        <div id="mini-mapa-ruta" style="width:100%;height:240px;border-radius:10px;overflow:hidden;margin-bottom:12px;border:1px solid var(--border)"></div>
         <div id="lista-seguimiento-ruta"></div>
         <div style="margin-top:12px;padding:10px 12px;background:#f8f7f4;border-radius:8px;font-size:10px;color:var(--muted);line-height:1.7">
           <strong style="color:#374151">📖 ¿Qué significa esto?</strong><br>
@@ -1478,16 +1478,58 @@ function pintarMiniMapaRuta(puntos) {
   miniMapRuta = L.map('mini-mapa-ruta', {zoomControl:false, attributionControl:false, dragging:true, scrollWheelZoom:false});
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(miniMapRuta);
 
-  conCoords.forEach(p => {
+  conCoords.forEach((p, i) => {
     const col = COLORS[p.statusActual] || '#9ca3af';
     const html = p.visitada
       ? `<div style="width:22px;height:22px;border-radius:50%;background:${col};border:2.5px solid #facc15;display:flex;align-items:center;justify-content:center;font-size:12px;box-shadow:0 1px 4px rgba(0,0,0,.4)">★</div>`
       : `<div style="width:14px;height:14px;border-radius:50%;background:${col};border:2px solid #1a1a2e;box-shadow:0 1px 4px rgba(0,0,0,.3)"></div>`;
     const icon = L.divIcon({className:'', html, iconSize:[22,22], iconAnchor:[11,11]});
-    L.marker(p.coords, {icon}).bindTooltip(p.nombre, {direction:'top', offset:[0,-12]}).addTo(miniMapRuta);
+    const m = L.marker(p.coords, {icon}).addTo(miniMapRuta);
+    m.bindTooltip(`#${i+1} ${p.nombre}`, {direction:'top', offset:[0,-12]});
+
+    // Clic: mismo tipo de info que el mapa principal (usando el registro real en RAW si existe)
+    const s = p.registro;
+    const stLabel = !s ? '' : s.st==='bdd' ? '🟠 Visitada con BDD' : s.st==='cita' ? '🔵 Programada' : s.st==='visitada' ? '🟢 Visitada sin BDD' : '⚫ Sin actividad';
+    const popupHTML = `
+      <div style="font-family:'DM Sans',sans-serif;font-size:11.5px;min-width:170px">
+        <div style="font-weight:700;margin-bottom:4px">${p.tipoEntidad==='Empresa'?'🏢':'🎓'} ${p.nombre}</div>
+        ${s ? `
+          <div style="color:#374151"><strong>Campus:</strong> ${s.c}</div>
+          <div style="color:#374151"><strong>Ejecutivo:</strong> ${s.ej}</div>
+          <div style="color:#374151"><strong>Estatus:</strong> ${stLabel}</div>
+          ${s.dir ? `<div style="color:#6b7280;font-size:10.5px;margin-top:3px">${s.dir}</div>` : ''}
+        ` : `<div style="color:#9ca3af">Sin datos adicionales disponibles</div>`}
+        <div style="margin-top:4px;font-size:10px;color:${p.visitada?'#166534':'#92400e'};font-weight:700">${p.visitada?'★ VISITADA':'PENDIENTE'}</div>
+      </div>`;
+    m.bindPopup(popupHTML, {maxWidth:240});
   });
 
   miniMapRuta.fitBounds(L.latLngBounds(conCoords.map(p=>p.coords)), {padding:[24,24], maxZoom:14});
+
+  // Línea de ruta siguiendo calles reales (orden 1→7, el orden de prioridad de la propuesta),
+  // usando el servicio gratuito OSRM. Si no responde a tiempo, se traza una línea recta de respaldo.
+  if (conCoords.length >= 2) {
+    const coordsStr = conCoords.map(p => `${p.coords[1]},${p.coords[0]}`).join(';'); // OSRM espera lng,lat
+    const url = `https://router.project-osrm.org/route/v1/driving/${coordsStr}?overview=full&geometries=geojson`;
+
+    conTimeout(fetch(url).then(r => r.json()), 6000)
+      .then(data => {
+        if (data.routes && data.routes[0]) {
+          const latlngs = data.routes[0].geometry.coordinates.map(([lng,lat]) => [lat,lng]);
+          L.polyline(latlngs, {color:'#2563eb', weight:4, opacity:.75}).addTo(miniMapRuta);
+        } else {
+          dibujarLineaRectaRespaldo(conCoords);
+        }
+      })
+      .catch(() => dibujarLineaRectaRespaldo(conCoords));
+  }
+}
+
+// Respaldo si el servicio de ruta por calles (OSRM) no responde: línea recta entre puntos,
+// en el mismo orden de visita sugerido.
+function dibujarLineaRectaRespaldo(conCoords) {
+  if (!miniMapRuta) return;
+  L.polyline(conCoords.map(p=>p.coords), {color:'#2563eb', weight:3, opacity:.6, dashArray:'6,6'}).addTo(miniMapRuta);
 }
 
 function propuestaRuta(campusName) {
