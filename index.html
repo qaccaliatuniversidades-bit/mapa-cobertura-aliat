@@ -303,6 +303,12 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
         📂 Cargar Excel
         <input type="file" id="excel-input" accept=".xlsx,.xls" style="display:none" onchange="loadExcel(event)">
       </label>
+      <button onclick="abrirModalGeocodificar()" title="Convierte direcciones aproximadas en coordenadas reales usando Nominatim (OpenStreetMap)"
+        style="font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;padding:5px 12px;
+          border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);
+          cursor:pointer;white-space:nowrap;transition:all .15s;display:inline-flex;align-items:center;gap:5px">
+        🌍 Geocodificar direcciones
+      </button>
       <div id="last-load-wrap" style="display:none;margin-top:6px;padding:5px 8px;
           border-radius:6px;background:rgba(37,99,235,.08);border:1px solid rgba(37,99,235,.18);
           font-family:'DM Sans',sans-serif;font-size:10.5px;line-height:1.4;color:var(--text-muted)">
@@ -388,6 +394,24 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
         <span onclick="cerrarModalRuta()" style="cursor:pointer;color:var(--muted);font-size:22px;line-height:1;padding:2px">×</span>
       </div>
       <div id="modal-ruta-body" style="flex:1;overflow-y:auto;padding:16px 20px"></div>
+    </div>
+  </div>
+
+  <!-- MODAL: Geocodificar direcciones aproximadas con Nominatim -->
+  <div id="modal-geo-overlay" style="display:none;position:fixed;inset:0;z-index:5000;
+      background:rgba(20,20,30,.55);align-items:center;justify-content:center;padding:20px"
+      onclick="if(event.target===this && !geoEnCurso) cerrarModalGeo()">
+    <div style="background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.35);
+        width:100%;max-width:520px;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;
+        font-family:'DM Sans',sans-serif">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;flex-shrink:0">
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--text)">🌍 Geocodificar direcciones aproximadas</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Usando Nominatim (OpenStreetMap) — gratuito, sin API Key</div>
+        </div>
+        <span onclick="cerrarModalGeo()" style="cursor:pointer;color:var(--muted);font-size:22px;line-height:1;padding:2px">×</span>
+      </div>
+      <div id="modal-geo-body" style="flex:1;overflow-y:auto;padding:16px 20px"></div>
     </div>
   </div>
 
@@ -1530,6 +1554,156 @@ function pintarMiniMapaRuta(puntos) {
 function dibujarLineaRectaRespaldo(conCoords) {
   if (!miniMapRuta) return;
   L.polyline(conCoords.map(p=>p.coords), {color:'#2563eb', weight:3, opacity:.6, dashArray:'6,6'}).addTo(miniMapRuta);
+}
+
+// ── GEOCODIFICACIÓN DE DIRECCIONES APROXIMADAS (Nominatim / OpenStreetMap) ──
+// Nominatim es un servicio público gratuito con una política de uso responsable:
+// máximo 1 solicitud por segundo, y no está pensado para volúmenes muy grandes de golpe.
+// Por eso este proceso respeta ese límite y se puede pausar/cancelar en cualquier momento.
+// IMPORTANTE: mientras no se guarde en Firebase, esto solo mejora el mapa de ESTA sesión —
+// por eso al terminar se puede descargar un Excel con las coordenadas obtenidas, para no
+// perder el trabajo si se cierra la pestaña.
+let geoEnCurso = false;
+let geoCancelar = false;
+let geoResultados = [];
+
+function cerrarModalGeo() {
+  if (geoEnCurso) return; // no se puede cerrar a medias sin pausar primero
+  document.getElementById('modal-geo-overlay').style.display = 'none';
+}
+
+function pendientesGeocodificar() {
+  return RAW.filter(s => s.coordAprox && s.dir);
+}
+
+function abrirModalGeocodificar() {
+  const pendientes = pendientesGeocodificar();
+  const body = document.getElementById('modal-geo-body');
+  geoResultados = [];
+
+  if (!pendientes.length) {
+    body.innerHTML = `<div style="text-align:center;padding:20px 8px;font-size:12px;color:var(--muted);line-height:1.6">
+      🎉 No hay direcciones pendientes por geocodificar — todas las escuelas/empresas con dirección ya tienen coordenada real o aproximada por código postal.
+    </div>`;
+  } else {
+    const minutos = Math.ceil(pendientes.length * 1.1 / 60);
+    body.innerHTML = `
+      <div style="font-size:11.5px;color:var(--muted);line-height:1.6;margin-bottom:14px">
+        Se encontraron <strong style="color:var(--text)">${pendientes.length}</strong> escuelas/empresas con
+        ubicación aproximada que sí tienen dirección de texto. Este proceso les buscará su coordenada real,
+        una por una (Nominatim solo permite 1 por segundo), así que tardará aproximadamente
+        <strong style="color:var(--text)">${minutos} minutos</strong>. Puedes seguir usando el mapa mientras corre,
+        y pausarlo/cancelarlo cuando quieras.
+      </div>
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 11px;margin-bottom:14px;font-size:10.5px;color:#92400e;line-height:1.5">
+        ⚠️ Esto solo actualiza el mapa <strong>en esta sesión del navegador</strong>. Al final podrás descargar
+        un Excel con las coordenadas encontradas para no perder el trabajo.
+      </div>
+      <button id="geo-btn-iniciar" onclick="iniciarGeocodificacion()"
+        style="width:100%;padding:10px;background:#1a1a2e;color:#fff;border:none;border-radius:8px;
+          font-family:'DM Sans',sans-serif;font-size:12.5px;font-weight:700;cursor:pointer">
+        ▶ Iniciar geocodificación
+      </button>
+      <div id="geo-progreso-area" style="margin-top:14px"></div>
+    `;
+  }
+
+  document.getElementById('modal-geo-overlay').style.display = 'flex';
+}
+
+function actualizarBarraProgresoGeo(actual, total) {
+  const pct = Math.round(actual/total*100);
+  const area = document.getElementById('geo-progreso-area');
+  area.innerHTML = `
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:4px">
+      <span>${actual} de ${total} procesadas</span><span>${pct}%</span>
+    </div>
+    <div style="height:8px;background:#f3f4f6;border-radius:4px;overflow:hidden;margin-bottom:10px">
+      <div style="height:100%;width:${pct}%;background:#2563eb;border-radius:4px;transition:width .3s"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button onclick="geoCancelar=true" style="flex:1;padding:8px;background:#f3f4f6;color:var(--text);
+        border:none;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:11.5px;font-weight:600;cursor:pointer">
+        ⏸ Pausar / Cancelar
+      </button>
+    </div>
+    <div id="geo-log" style="max-height:180px;overflow-y:auto;font-size:10px;color:var(--muted);line-height:1.6;
+      background:#f8f7f4;border-radius:8px;padding:8px 10px"></div>
+  `;
+}
+
+async function iniciarGeocodificacion() {
+  const pendientes = pendientesGeocodificar();
+  geoEnCurso = true;
+  geoCancelar = false;
+  document.getElementById('geo-btn-iniciar').style.display = 'none';
+  actualizarBarraProgresoGeo(0, pendientes.length);
+  const log = document.getElementById('geo-log');
+
+  let encontradas = 0, noEncontradas = 0;
+
+  for (let i = 0; i < pendientes.length; i++) {
+    if (geoCancelar) {
+      log.innerHTML = `<div style="color:#92400e;font-weight:600">⏸ Proceso pausado por el usuario en ${i} de ${pendientes.length}.</div>` + log.innerHTML;
+      break;
+    }
+    const s = pendientes[i];
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(s.dir)}&format=json&limit=1&countrycodes=mx`;
+      const resp = await conTimeout(fetch(url, {headers:{'Accept-Language':'es'}}), 8000);
+      const data = await resp.json();
+      if (data && data[0]) {
+        const lat = parseFloat(data[0].lat), lng = parseFloat(data[0].lon);
+        s.lat = lat; s.lng = lng; s.coords = [lat, lng]; s.coordAprox = false;
+        geoResultados.push({nombre: s.e, campus: s.c, direccion: s.dir, lat, lng, encontrada: true});
+        encontradas++;
+        log.innerHTML = `<div>✅ ${s.e}</div>` + log.innerHTML;
+      } else {
+        geoResultados.push({nombre: s.e, campus: s.c, direccion: s.dir, lat:'', lng:'', encontrada: false});
+        noEncontradas++;
+        log.innerHTML = `<div style="color:#9ca3af">— Sin resultado: ${s.e}</div>` + log.innerHTML;
+      }
+    } catch (err) {
+      geoResultados.push({nombre: s.e, campus: s.c, direccion: s.dir, lat:'', lng:'', encontrada: false});
+      noEncontradas++;
+      log.innerHTML = `<div style="color:#dc2626">❌ Error con ${s.e}: ${err.message}</div>` + log.innerHTML;
+    }
+    actualizarBarraProgresoGeo(i+1, pendientes.length);
+    document.getElementById('geo-log').innerHTML = log.innerHTML;
+    render(); // refleja las coordenadas nuevas en el mapa conforme se van encontrando
+    await new Promise(r => setTimeout(r, 1100)); // respeta el límite de 1 solicitud/segundo de Nominatim
+  }
+
+  geoEnCurso = false;
+  const area = document.getElementById('geo-progreso-area');
+  area.innerHTML += `
+    <div style="margin-top:10px;padding:10px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:11px;color:#166534;line-height:1.6">
+      ✅ <strong>${encontradas}</strong> coordenadas encontradas · <strong>${noEncontradas}</strong> sin resultado.
+    </div>
+    <button onclick="descargarResultadosGeo()"
+      style="width:100%;margin-top:10px;padding:9px;background:#1a1a2e;color:#fff;border:none;border-radius:8px;
+        font-family:'DM Sans',sans-serif;font-size:12px;font-weight:700;cursor:pointer">
+      📥 Descargar resultados (Excel)
+    </button>
+    ${geoCancelar && pendientesGeocodificar().length ? `
+    <button onclick="iniciarGeocodificacion()"
+      style="width:100%;margin-top:8px;padding:9px;background:#fff;color:#1a1a2e;border:1.5px solid #1a1a2e;border-radius:8px;
+        font-family:'DM Sans',sans-serif;font-size:12px;font-weight:700;cursor:pointer">
+      ▶ Continuar con las restantes
+    </button>` : ''}
+  `;
+}
+
+function descargarResultadosGeo() {
+  if (!geoResultados.length) return;
+  const ws = XLSX.utils.json_to_sheet(geoResultados.map(r => ({
+    'Nombre': r.nombre, 'Campus': r.campus, 'Dirección': r.direccion,
+    'Latitud': r.lat, 'Longitud': r.lng, 'Encontrada': r.encontrada ? 'Sí' : 'No'
+  })));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Coordenadas');
+  const fecha = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `coordenadas_geocodificadas_${fecha}.xlsx`);
 }
 
 function propuestaRuta(campusName) {
