@@ -309,6 +309,12 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
           cursor:pointer;white-space:nowrap;transition:all .15s;display:inline-flex;align-items:center;gap:5px">
         🌍 Geocodificar direcciones
       </button>
+      <div id="sync-status" title="Este catálogo se comparte entre todos a través de la nube"
+        style="font-family:'DM Sans',sans-serif;font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:5px;white-space:nowrap">
+        <span id="sync-status-icon">☁️</span> <span id="sync-status-text">Cargando…</span>
+        <span onclick="intentarCargarCatalogoNube(true)" title="Volver a sincronizar ahora"
+          style="cursor:pointer;text-decoration:underline;margin-left:2px">🔄</span>
+      </div>
       <div id="last-load-wrap" style="display:none;margin-top:6px;padding:5px 8px;
           border-radius:6px;background:rgba(37,99,235,.08);border:1px solid rgba(37,99,235,.18);
           font-family:'DM Sans',sans-serif;font-size:10.5px;line-height:1.4;color:var(--text-muted)">
@@ -1514,6 +1520,9 @@ function pintarMiniMapaRuta(puntos) {
     // Clic: mismo tipo de info que el mapa principal (usando el registro real en RAW si existe)
     const s = p.registro;
     const stLabel = !s ? '' : s.st==='bdd' ? '🟠 Visitada con BDD' : s.st==='cita' ? '🔵 Programada' : s.st==='visitada' ? '🟢 Visitada sin BDD' : '⚫ Sin actividad';
+    const gmapsUrlMini = (s && s.coordAprox && s.dir)
+      ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(s.dir)
+      : 'https://www.google.com/maps?q=' + p.coords[0] + ',' + p.coords[1];
     const popupHTML = `
       <div style="font-family:'DM Sans',sans-serif;font-size:11.5px;min-width:170px">
         <div style="font-weight:700;margin-bottom:4px">${p.tipoEntidad==='Empresa'?'🏢':'🎓'} ${p.nombre}</div>
@@ -1524,6 +1533,11 @@ function pintarMiniMapaRuta(puntos) {
           ${s.dir ? `<div style="color:#6b7280;font-size:10.5px;margin-top:3px">${s.dir}</div>` : ''}
         ` : `<div style="color:#9ca3af">Sin datos adicionales disponibles</div>`}
         <div style="margin-top:4px;font-size:10px;color:${p.visitada?'#166534':'#92400e'};font-weight:700">${p.visitada?'★ VISITADA':'PENDIENTE'}</div>
+        <a href="${gmapsUrlMini}" target="_blank"
+          style="display:inline-block;margin-top:6px;font-size:10px;font-weight:700;padding:4px 9px;
+            border-radius:6px;background:#4285F4;color:#fff;text-decoration:none">
+          📍 Ver en Google Maps
+        </a>
       </div>`;
     m.bindPopup(popupHTML, {maxWidth:240});
   });
@@ -2631,7 +2645,14 @@ function loadExcel(event) {
           if (s.numAprox) existente.numAprox = s.numAprox;
           if (s.giro) existente.giro = s.giro;
           if (s.nivel) existente.nivel = s.nivel;
-          if (!existente.dir && s.dirExcel) existente.dir = s.dirExcel; // solo si no tenía ya una dirección real
+          // La dirección del Excel SIEMPRE tiene prioridad — es la fuente de verdad de la
+          // operación diaria. Si venía una dirección distinta (de un cruce anterior con el
+          // catálogo, que podía estar mal), se corrige aquí y se marca para re-geocodificar,
+          // porque la coordenada guardada ya no corresponde a la dirección correcta.
+          if (s.dirExcel && s.dirExcel !== existente.dir) {
+            existente.dir = s.dirExcel;
+            existente.coordAprox = true;
+          }
           existente.visitadoJefe = s.visitadoJefe;
           existente.visitadoRector = s.visitadoRector;
           existente.actividadesDetalle = s.actividadesDetalle;
@@ -2641,8 +2662,8 @@ function loadExcel(event) {
           const catalogo = s.tipoEntidad === 'Empresa' ? catalogoEmp : catalogoEsc;
           const real = catalogo[key];
           if (real) {
-            s.coords = [real.lat, real.lng];
-            if (real.dir) s.dir = real.dir;
+            s.coords = [real.lat, real.lng]; // la coordenada del catálogo sigue siendo la mejor disponible
+            s.dir = s.dirExcel || real.dir;  // pero la dirección del Excel manda si la trae
           } else {
             if (s.dirExcel) s.dir = s.dirExcel;
             const cp = extraerCP(s.dirExcel);
@@ -2669,6 +2690,7 @@ function loadExcel(event) {
       render(); // refresca con los datos nuevos SIN resetear los filtros/vista que ya tenías puestos
 
       mostrarNotificacionNuevos(nuevosEscuelas, nuevosEmpresas, actualizados);
+      guardarCatalogoEnNube(); // para que todos vean esta misma actualización, sin volver a subir el Excel
 
       const now = new Date();
       const pad = n => String(n).padStart(2,'0');
@@ -2706,12 +2728,110 @@ function toggleRanking() {
   btn.style.background = visible ? 'var(--bg)' : '#fff7ed';
 }
 
+// ── PERSISTENCIA DEL CATÁLOGO COMPLETO EN FIREBASE ──────────────────────────
+// Para que cualquiera que abra el mapa vea la misma información actualizada,
+// sin tener que volver a subir el Excel cada quien por su cuenta.
+const FIREBASE_CATALOGO_PATH = 'catalogo_completo';
+
+// Convierte el RAW actual a una forma segura para guardar en Firebase (sin objetos
+// Date, que no acepta directamente — se guardan como texto ISO y se reconstruyen al leer).
+function sanitizarRAWParaFirebase() {
+  return RAW.map(s => {
+    const copia = {...s};
+    delete copia.coords; // se recalcula siempre al cargar (real o jitter), no hace falta guardarlo
+    if (copia.actividadesDetalle) {
+      copia.actividadesDetalle = copia.actividadesDetalle.map(a => ({
+        ...a,
+        fechaDate: a.fechaDate ? a.fechaDate.toISOString() : null
+      }));
+    }
+    return copia;
+  });
+}
+
+function reconstruirRAWDesdeFirebase(datos) {
+  return datos.map(s => {
+    if (s.actividadesDetalle) {
+      s.actividadesDetalle = s.actividadesDetalle.map(a => ({
+        ...a,
+        fechaDate: a.fechaDate ? new Date(a.fechaDate) : null
+      }));
+    }
+    return s;
+  });
+}
+
+function actualizarSyncStatus(texto, icono) {
+  const elIcon = document.getElementById('sync-status-icon');
+  const elText = document.getElementById('sync-status-text');
+  if (elIcon) elIcon.textContent = icono || '☁️';
+  if (elText) elText.textContent = texto;
+}
+
+// Se llama automáticamente después de procesar un Excel (loadExcel), para que la
+// actualización quede disponible para todos, no solo en tu navegador.
+function guardarCatalogoEnNube() {
+  actualizarSyncStatus('Guardando en la nube…', '⏳');
+  const datos = {
+    actualizadoEn: new Date().toISOString(),
+    totalRegistros: RAW.length,
+    raw: sanitizarRAWParaFirebase()
+  };
+  conTimeout(db.ref(FIREBASE_CATALOGO_PATH).set(datos), 20000)
+    .then(() => actualizarSyncStatus('Sincronizado ahora mismo', '☁️'))
+    .catch(err => {
+      actualizarSyncStatus('No se pudo guardar en la nube', '⚠️');
+      console.error('Error guardando catálogo en Firebase:', err);
+    });
+}
+
+// Se llama al abrir el mapa (y también manualmente con el 🔄 del header): si hay una
+// versión guardada en la nube, reemplaza el catálogo local con esa.
+function intentarCargarCatalogoNube(manual) {
+  actualizarSyncStatus(manual ? 'Sincronizando…' : 'Cargando…', '⏳');
+  conTimeout(db.ref(FIREBASE_CATALOGO_PATH).once('value'), 12000)
+    .then(snap => {
+      if (!snap.exists() || !snap.val().raw || !Array.isArray(snap.val().raw)) {
+        actualizarSyncStatus('Usando catálogo local (aún no hay nada en la nube)', '☁️');
+        return;
+      }
+      const datos = snap.val();
+      const nuevoRAW = reconstruirRAWDesdeFirebase(datos.raw);
+      RAW.length = 0;
+      nuevoRAW.forEach(s => RAW.push(s));
+
+      // Recalcular coordenadas (reales si existen, jitter si no) para todos los registros
+      const campusCount2 = {}, campusIdx2 = {};
+      RAW.forEach(s => { campusCount2[s.c] = (campusCount2[s.c]||0) + 1; });
+      RAW.forEach(s => {
+        if (!campusIdx2[s.c]) campusIdx2[s.c] = 0;
+        const i = campusIdx2[s.c]++;
+        s.coords = (typeof s.lat === 'number' && typeof s.lng === 'number')
+          ? [s.lat, s.lng]
+          : jitter(getCoords(s.c), i, campusCount2[s.c]);
+      });
+
+      initFilters();
+      render();
+
+      const fecha = datos.actualizadoEn ? new Date(datos.actualizadoEn).toLocaleString('es-MX') : '—';
+      actualizarSyncStatus(`Sincronizado (${fecha})`, '☁️');
+    })
+    .catch(err => {
+      actualizarSyncStatus('Sin conexión a la nube (usando catálogo local)', '⚠️');
+      console.error('Error cargando catálogo desde Firebase:', err);
+    });
+}
+
 render();
 
 // Centrar en México siempre al inicio
 setTimeout(() => {
   map.setView([22.5, -102], 5);
 }, 100);
+
+// Al abrir el mapa, intenta traer la versión más reciente guardada en la nube
+intentarCargarCatalogoNube();
 </script>
 
 <script>
