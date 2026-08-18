@@ -1663,22 +1663,33 @@ async function iniciarGeocodificacion() {
     }
     const s = pendientes[i];
     try {
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(s.dir)}&format=json&limit=1&countrycodes=mx`;
+      // Si la dirección no trae código postal (ni el nombre de la ciudad del campus),
+      // se le agrega la ciudad/estado del campus como contexto — así Nominatim no tiene
+      // que adivinar en qué ciudad de México está esa calle, y evitamos casos como el de
+      // Safran (una dirección incompleta que terminó geolocalizada en otra ciudad).
+      const info = CAMPUS_INFO[s.c];
+      const tieneCP = /\d{5}/.test(s.dir);
+      const tieneCiudad = info && s.dir.toLowerCase().includes(info.ciudad.toLowerCase());
+      const queryDireccion = (!tieneCP && !tieneCiudad && info)
+        ? `${s.dir}, ${info.ciudad}, ${info.estado}`
+        : s.dir;
+
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(queryDireccion)}&format=json&limit=1&countrycodes=mx`;
       const resp = await conTimeout(fetch(url, {headers:{'Accept-Language':'es'}}), 8000);
       const data = await resp.json();
       if (data && data[0]) {
         const lat = parseFloat(data[0].lat), lng = parseFloat(data[0].lon);
         s.lat = lat; s.lng = lng; s.coords = [lat, lng]; s.coordAprox = false;
-        geoResultados.push({nombre: s.e, campus: s.c, direccion: s.dir, lat, lng, encontrada: true});
+        geoResultados.push({nombre: s.e, campus: s.c, direccion: s.dir, busqueda: queryDireccion, lat, lng, encontrada: true});
         encontradas++;
         log.innerHTML = `<div>✅ ${s.e}</div>` + log.innerHTML;
       } else {
-        geoResultados.push({nombre: s.e, campus: s.c, direccion: s.dir, lat:'', lng:'', encontrada: false});
+        geoResultados.push({nombre: s.e, campus: s.c, direccion: s.dir, busqueda: queryDireccion, lat:'', lng:'', encontrada: false});
         noEncontradas++;
         log.innerHTML = `<div style="color:#9ca3af">— Sin resultado: ${s.e}</div>` + log.innerHTML;
       }
     } catch (err) {
-      geoResultados.push({nombre: s.e, campus: s.c, direccion: s.dir, lat:'', lng:'', encontrada: false});
+      geoResultados.push({nombre: s.e, campus: s.c, direccion: s.dir, busqueda: s.dir, lat:'', lng:'', encontrada: false});
       noEncontradas++;
       log.innerHTML = `<div style="color:#dc2626">❌ Error con ${s.e}: ${err.message}</div>` + log.innerHTML;
     }
@@ -1711,8 +1722,9 @@ async function iniciarGeocodificacion() {
 function descargarResultadosGeo() {
   if (!geoResultados.length) return;
   const ws = XLSX.utils.json_to_sheet(geoResultados.map(r => ({
-    'Nombre': r.nombre, 'Campus': r.campus, 'Dirección': r.direccion,
-    'Latitud': r.lat, 'Longitud': r.lng, 'Encontrada': r.encontrada ? 'Sí' : 'No'
+    'Nombre': r.nombre, 'Campus': r.campus, 'Dirección original': r.direccion,
+    'Búsqueda usada': r.busqueda || r.direccion, 'Latitud': r.lat, 'Longitud': r.lng,
+    'Encontrada': r.encontrada ? 'Sí' : 'No'
   })));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Coordenadas');
@@ -2667,7 +2679,7 @@ function loadExcel(event) {
             existente.coordAprox = true;
             existente.coords = (typeof existente.lat === 'number' && typeof existente.lng === 'number')
               ? [existente.lat, existente.lng]
-              : jitter(getCoords(existente.c), Math.floor(Math.random()*12), 12);
+              : jitter(getCoords(existente.c), i, cCount[existente.c] || 1);
           }
           existente.visitadoJefe = s.visitadoJefe;
           existente.visitadoRector = s.visitadoRector;
