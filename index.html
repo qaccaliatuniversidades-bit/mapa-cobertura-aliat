@@ -2647,11 +2647,27 @@ function loadExcel(event) {
           if (s.nivel) existente.nivel = s.nivel;
           // La dirección del Excel SIEMPRE tiene prioridad — es la fuente de verdad de la
           // operación diaria. Si venía una dirección distinta (de un cruce anterior con el
-          // catálogo, que podía estar mal), se corrige aquí y se marca para re-geocodificar,
-          // porque la coordenada guardada ya no corresponde a la dirección correcta.
+          // catálogo que podía estar mal, o porque antes no teníamos ninguna dirección y el
+          // registro solo tenía jitter/círculo), se corrige aquí Y TAMBIÉN se recalcula su
+          // coordenada: primero buscando una referencia real cercana por código postal dentro
+          // del mismo campus; si no se encuentra, se limpia cualquier coordenada previa (que
+          // podía estar confirmadamente mal, como pasó con Safran) para que vuelva a jitter
+          // alrededor del campus correcto, en vez de quedarse apuntando a un lugar equivocado.
           if (s.dirExcel && s.dirExcel !== existente.dir) {
             existente.dir = s.dirExcel;
+            const cpExistente = extraerCP(s.dirExcel);
+            const cercanoExistente = buscarCoordsPorCP(cpExistente, existente.c);
+            if (cercanoExistente) {
+              existente.lat = cercanoExistente[0];
+              existente.lng = cercanoExistente[1];
+            } else {
+              delete existente.lat;
+              delete existente.lng;
+            }
             existente.coordAprox = true;
+            existente.coords = (typeof existente.lat === 'number' && typeof existente.lng === 'number')
+              ? [existente.lat, existente.lng]
+              : jitter(getCoords(existente.c), Math.floor(Math.random()*12), 12);
           }
           existente.visitadoJefe = s.visitadoJefe;
           existente.visitadoRector = s.visitadoRector;
