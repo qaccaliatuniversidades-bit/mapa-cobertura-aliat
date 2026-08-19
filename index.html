@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -220,8 +221,15 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
           cursor:pointer;transition:all .15s;white-space:nowrap">
         🎓 Aliat
       </button>
+      <button id="btn-toggle-filtros" onclick="toggleFiltros()" title="Mostrar/ocultar filtros para ver el mapa más grande"
+        style="font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;padding:6px 14px;
+          border-radius:8px;border:1.5px solid var(--border);background:var(--bg);color:var(--text);
+          cursor:pointer;transition:all .15s;white-space:nowrap">
+        ▾ Filtros
+      </button>
     </div>
     <div class="hdiv"></div>
+    <div id="filtros-wrap" style="display:contents">
     <div id="filters">
       <select id="f-zona" onchange="applyFilters()"><option value="">Todas las zonas</option></select>
       <select id="f-campus" onchange="applyFilters()"><option value="">Todos los campus</option></select>
@@ -332,6 +340,7 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
         Panel ›
       </button>
     </div>
+    </div>
   </div>
 
   <div id="ciclo-indicator" style="display:flex;align-items:center;gap:8px;padding:6px 16px;
@@ -354,10 +363,18 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
     <div class="stat" title="Estimado: promedio BDD por escuela × total escuelas del universo filtrado"><div class="stat-n" style="color:#7c3aed" id="s-potencial">—</div><div class="stat-l">Potencial base</div></div>
     <div class="stat" title="BDD captada ÷ potencial estimado del universo"><div class="stat-n" style="color:#0891b2" id="s-pct-bdd">—</div><div class="stat-l">Cob. BDD</div></div>
     <div class="stat"><div class="stat-n" id="s-pct">0%</div><div class="stat-l">% cobertura</div></div>
+    <button id="btn-toggle-grafico" onclick="toggleVistaGrafico()"
+      style="align-self:center;margin-left:8px;padding:8px 14px;background:#1a1a2e;color:#fff;border:none;
+        border-radius:8px;font-family:'DM Sans',sans-serif;font-size:11.5px;font-weight:700;cursor:pointer;
+        display:flex;align-items:center;gap:6px;white-space:nowrap;transition:opacity .15s"
+      onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
+      📊 Ver gráfica
+    </button>
   </div>
 
   <div id="main-wrap" style="display:flex;flex:1;overflow:hidden;position:relative">
     <div id="map" style="flex:1;min-width:0"></div>
+    <div id="dash-view" style="display:none;flex:1;min-width:0;overflow:hidden;padding:20px;background:var(--surface)"></div>
     <div id="ranking" style="width:240px;flex-shrink:0;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden">
       <div style="padding:10px 14px 8px;border-bottom:1px solid var(--border);flex-shrink:0">
         <div style="font-size:12px;font-weight:600;color:var(--text)">Panel de análisis</div>
@@ -406,7 +423,7 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
   <!-- MODAL: Geocodificar direcciones aproximadas con Nominatim -->
   <div id="modal-geo-overlay" style="display:none;position:fixed;inset:0;z-index:5000;
       background:rgba(20,20,30,.55);align-items:center;justify-content:center;padding:20px"
-      onclick="if(event.target===this && !geoEnCurso) cerrarModalGeo()">
+      onclick="if(event.target===this) cerrarModalGeo()">
     <div style="background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.35);
         width:100%;max-width:520px;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;
         font-family:'DM Sans',sans-serif">
@@ -893,32 +910,82 @@ const TIPO_COLORS = {
   'Webinar':'#0369a1'
 };
 
-function renderRankingAct(vis) {
-  // Catálogo OFICIAL y ÚNICO de actividades que generan BDD. El mapa solo da seguimiento a
-  // estas — cualquier otra actividad es protocolo del asesor y no se muestra aquí.
-  const ESCUELA_ACTS_LIST = [
-    'Cita Inicial Apertura','Conferencia Alumnos','Conferencia Docentes','Conferencia Padres',
-    'Feria','Módulo','Sesión Informativa/Saloneo','Sesión para Beneficio Docentes',
-    'Simulador de Ingreso a Universidades Públicas','Taller',
-    'Test de Orientación Vocacional y Personalidad','Activación QR'
-  ];
-  const EMPRESA_ACTS_LIST = [
-    'Cita inicial / Apertura','Conferencias','Feria Empresarial','Módulo','NOM-035',
-    'Sesión informativa','Taller / Jornada de talleres','Webinar'
-  ];
+// Catálogo OFICIAL y ÚNICO de actividades que generan BDD (fuente única para toda la app:
+// ranking de actividades y dashboard de gráfica comparten esta misma lista). Cualquier otra
+// actividad es protocolo del asesor y no cuenta para BDD.
+const ESCUELA_ACTS_LIST = [
+  'Cita Inicial Apertura','Conferencia Alumnos','Conferencia Docentes','Conferencia Padres',
+  'Feria','Módulo','Sesión Informativa/Saloneo','Sesión para Beneficio Docentes',
+  'Simulador de Ingreso a Universidades Públicas','Taller',
+  'Test de Orientación Vocacional y Personalidad','Activación QR'
+];
+const EMPRESA_ACTS_LIST = [
+  'Cita inicial / Apertura','Conferencias','Feria Empresarial','Módulo','NOM-035',
+  'Sesión informativa','Taller / Jornada de talleres','Webinar'
+];
 
-  // Se cuenta por separado según el tipo REAL del registro (Escuela vs Empresa), no solo por
-  // el texto de la actividad — así "Módulo" de una escuela nunca se mezcla con "Módulo" de una empresa.
+// Homologa variantes de ESCRITURA de la misma actividad oficial (mayúsculas, acentos, "/", "-",
+// espacios extra) — ej. "CITA INICIAL/APERTURA" y "Cita Inicial/Apertura" cuentan como
+// "Cita Inicial Apertura". NO adivina actividades distintas: si el texto normalizado no
+// coincide con ninguna del catálogo oficial, se queda fuera (no cuenta para BDD) a propósito.
+function normalizarTextoActividad(s) {
+  return sinAcentos((s || '').toLowerCase())
+    .replace(/[/\-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function construirMapaHomologado(lista) {
+  const mapa = {};
+  lista.forEach(t => { mapa[normalizarTextoActividad(t)] = t; });
+  return mapa;
+}
+const ESCUELA_ACTS_MAP = construirMapaHomologado(ESCUELA_ACTS_LIST);
+const EMPRESA_ACTS_MAP = construirMapaHomologado(EMPRESA_ACTS_LIST);
+
+// Cuenta actividades BDD por grupo (Escuela vs Empresa) sobre un universo ya filtrado (vis).
+// Se cuenta por separado según el tipo REAL del registro, no solo por el texto de la actividad —
+// así "Módulo" de una escuela nunca se mezcla con "Módulo" de una empresa. Las variantes de
+// escritura de la misma actividad oficial se homologan (ver normalizarTextoActividad).
+// Todo lo que NO esté en el catálogo oficial se cuenta aparte como "sin confirmar" — así nunca
+// se pierde información (importante porque la captura es manual en otra app y a veces hay
+// errores de dedo), pero tampoco se mezcla a ciegas con las 12+8 oficiales sin confirmación.
+function contarActividadesBDDPorGrupo(vis) {
   const countsEscuela = {}, countsEmpresa = {};
+  const extraEscuela = {}, extraEmpresa = {};
   vis.forEach(s => {
-    const destino = (s.tipoEntidad === 'Empresa') ? countsEmpresa : countsEscuela;
-    (s.tipos||[]).forEach(t => { destino[t] = (destino[t]||0) + 1; });
+    const esEmpresa = s.tipoEntidad === 'Empresa';
+    const destino = esEmpresa ? countsEmpresa : countsEscuela;
+    const mapa = esEmpresa ? EMPRESA_ACTS_MAP : ESCUELA_ACTS_MAP;
+    const extraDestino = esEmpresa ? extraEmpresa : extraEscuela;
+    (s.tipos||[]).forEach(t => {
+      if (!t) return;
+      const norm = normalizarTextoActividad(t);
+      const canonico = mapa[norm];
+      if (canonico) {
+        destino[canonico] = (destino[canonico]||0) + 1;
+      } else {
+        if (!extraDestino[norm]) extraDestino[norm] = { label: t, count: 0 };
+        extraDestino[norm].count++;
+      }
+    });
   });
-
   const grupoEscuela = ESCUELA_ACTS_LIST.map(t => [t, countsEscuela[t] || 0]).sort((a,b)=>b[1]-a[1]);
   const grupoEmpresa = EMPRESA_ACTS_LIST.map(t => [t, countsEmpresa[t] || 0]).sort((a,b)=>b[1]-a[1]);
-  const totalEscuela = grupoEscuela.reduce((s,[,c])=>s+c, 0);
-  const totalEmpresa = grupoEmpresa.reduce((s,[,c])=>s+c, 0);
+  const extraEscuelaList = Object.values(extraEscuela).map(x => [x.label, x.count]).sort((a,b)=>b[1]-a[1]);
+  const extraEmpresaList = Object.values(extraEmpresa).map(x => [x.label, x.count]).sort((a,b)=>b[1]-a[1]);
+  return {
+    grupoEscuela, grupoEmpresa,
+    extraEscuela: extraEscuelaList, extraEmpresa: extraEmpresaList,
+    totalEscuela: grupoEscuela.reduce((s,[,c])=>s+c, 0),
+    totalEmpresa: grupoEmpresa.reduce((s,[,c])=>s+c, 0),
+    totalEscuelaExtra: extraEscuelaList.reduce((s,[,c])=>s+c, 0),
+    totalEmpresaExtra: extraEmpresaList.reduce((s,[,c])=>s+c, 0)
+  };
+}
+
+function renderRankingAct(vis) {
+  const { grupoEscuela, grupoEmpresa, totalEscuela, totalEmpresa,
+          extraEscuela, extraEmpresa, totalEscuelaExtra, totalEmpresaExtra } = contarActividadesBDDPorGrupo(vis);
 
   const max = Math.max(...grupoEscuela.map(([,c])=>c), ...grupoEmpresa.map(([,c])=>c), 1);
   const body = document.getElementById('ranking-body');
@@ -938,6 +1005,23 @@ function renderRankingAct(vis) {
     </div>`;
   };
 
+  // Fila para actividades que NO están en el catálogo oficial — mismo formato, color gris para
+  // distinguirlas de un vistazo, y con título completo (no se sabe si el texto es "canónico").
+  const renderFilaExtra = ([label, count]) => {
+    const maxExtra = Math.max(...extraEscuela.map(([,c])=>c), ...extraEmpresa.map(([,c])=>c), 1);
+    const pct = Math.round(count/maxExtra*100);
+    const nombre = label.length > 30 ? label.substring(0,28)+'…' : label;
+    return `<div style="margin-bottom:9px;padding:0 14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+        <span style="font-size:11px;font-weight:500;color:#6b7280;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${label} (no está en el catálogo oficial de BDD — pendiente de confirmar)">${nombre}</span>
+        <span style="font-size:12px;font-weight:700;color:#9ca3af;margin-left:6px;flex-shrink:0">${count}</span>
+      </div>
+      <div style="height:4px;background:#f3f4f6;border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:#d1d5db;border-radius:3px;transition:width .3s ease"></div>
+      </div>
+    </div>`;
+  };
+
   const renderHeader = (titulo, total) =>
     `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 14px 4px;background:var(--bg)">
       <span style="font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)">${titulo}</span>
@@ -945,8 +1029,6 @@ function renderRankingAct(vis) {
     </div>`;
 
   let html = '';
-  // Si hay un filtro de tipo de entidad activo, solo se muestra la sección correspondiente.
-  // Sin filtro (o "Escuelas y empresas"), se muestran ambas, como hasta ahora.
   const mostrarEscuela = active.tipoEntidad !== 'Empresa';
   const mostrarEmpresa = active.tipoEntidad !== 'Escuela';
 
@@ -957,6 +1039,14 @@ function renderRankingAct(vis) {
   if (mostrarEmpresa) {
     html += renderHeader('🏢 Empresa · genera BDD', totalEmpresa);
     html += grupoEmpresa.map(renderFila).join('');
+  }
+  if (mostrarEscuela && extraEscuela.length) {
+    html += renderHeader('🔍 Escuela · sin confirmar', totalEscuelaExtra);
+    html += extraEscuela.map(renderFilaExtra).join('');
+  }
+  if (mostrarEmpresa && extraEmpresa.length) {
+    html += renderHeader('🔍 Empresa · sin confirmar', totalEmpresaExtra);
+    html += extraEmpresa.map(renderFilaExtra).join('');
   }
 
   body.innerHTML = html;
@@ -1593,7 +1683,8 @@ let geoCancelar = false;
 let geoResultados = [];
 
 function cerrarModalGeo() {
-  if (geoEnCurso) return; // no se puede cerrar a medias sin pausar primero
+  // Cerrar/ocultar la ventana NUNCA detiene el proceso — solo lo quita de la vista.
+  // El geocodificador sigue corriendo en segundo plano aunque esta ventana esté oculta.
   document.getElementById('modal-geo-overlay').style.display = 'none';
 }
 
@@ -1602,6 +1693,13 @@ function pendientesGeocodificar() {
 }
 
 function abrirModalGeocodificar() {
+  // Si el proceso ya está corriendo, solo se vuelve a mostrar la ventana con el progreso
+  // actual — no se reinicia ni se reconstruye la lista de pendientes desde cero.
+  if (geoEnCurso) {
+    document.getElementById('modal-geo-overlay').style.display = 'flex';
+    return;
+  }
+
   const pendientes = pendientesGeocodificar();
   const body = document.getElementById('modal-geo-body');
   geoResultados = [];
@@ -1617,8 +1715,9 @@ function abrirModalGeocodificar() {
         Se encontraron <strong style="color:var(--text)">${pendientes.length}</strong> escuelas/empresas con
         ubicación aproximada que sí tienen dirección de texto. Este proceso les buscará su coordenada real,
         una por una (Nominatim solo permite 1 por segundo), así que tardará aproximadamente
-        <strong style="color:var(--text)">${minutos} minutos</strong>. Puedes seguir usando el mapa mientras corre,
-        y pausarlo/cancelarlo cuando quieras.
+        <strong style="color:var(--text)">${minutos} minutos</strong>. Puedes cerrar esta ventana con la "×" y
+        seguir usando el mapa normalmente mientras corre — el proceso sigue en segundo plano. Para ver el
+        progreso otra vez, dale clic al botón "🌍 Geocodificar direcciones".
       </div>
       <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:9px 11px;margin-bottom:14px;font-size:10.5px;color:#92400e;line-height:1.5">
         ⚠️ Esto solo actualiza el mapa <strong>en esta sesión del navegador</strong>. Al final podrás descargar
@@ -2098,6 +2197,10 @@ function render() {
   document.getElementById('s-potencial').textContent = potencial > 0 ? '~' + potencial.toLocaleString() : '—';
   document.getElementById('s-pct-bdd').textContent = pctBDD;
   document.getElementById('s-pct').textContent = pct + '%';
+
+  // Si la vista de gráfico está activa, se refresca con el nuevo filtro sin que el usuario
+  // tenga que salir a verla de nuevo — así puede ir jugando con los filtros desde ahí mismo.
+  if (vistaGrafico) renderDashboardGrafica();
 }
 
 function showCampusPanel(name) {
@@ -2763,6 +2866,185 @@ function loadExcel(event) {
   event.target.value = '';
 }
 
+// ── DASHBOARD (vista de gráfico intercambiable con el mapa, reactiva a los filtros) ─
+let dashboardChartInstance = null;
+let vistaGrafico = false;
+
+function nombreFiltroActivo() {
+  const partes = [];
+  if (active.campus) partes.push(active.campus);
+  else if (active.zona) partes.push(active.zona);
+  if (active.anio) partes.push(active.anio);
+  if (active.semana) partes.push(`Semana ${active.semana}`);
+  return partes.length ? partes.join(' · ') : 'Universo completo';
+}
+
+// Alterna entre la vista de mapa y la vista de gráfico. El mapa no se destruye,
+// solo se oculta — así al volver aparece exactamente donde se dejó (zoom, centro, etc.)
+function toggleVistaGrafico() {
+  vistaGrafico = !vistaGrafico;
+  document.getElementById('map').style.display = vistaGrafico ? 'none' : '';
+  document.getElementById('dash-view').style.display = vistaGrafico ? 'block' : 'none';
+  document.getElementById('btn-toggle-grafico').innerHTML = vistaGrafico ? '🗺️ Volver al mapa' : '📊 Ver gráfica';
+  if (vistaGrafico) renderDashboardGrafica();
+}
+
+// Reconstruye el contenido de la vista de gráfico con el universo actualmente filtrado.
+// Se llama al activar la vista Y cada vez que render() corre (cambio de filtro), para
+// que jugar con los filtros actualice la gráfica sin tener que salir de la vista.
+function renderDashboardGrafica() {
+  const vis = getVisible();
+  const cont = document.getElementById('dash-view');
+
+  if (!vis.length) {
+    cont.innerHTML = `<div style="text-align:center;padding:40px 8px;font-size:12px;color:var(--muted)">No hay registros para el filtro actual.</div>`;
+    if (dashboardChartInstance) { dashboardChartInstance.destroy(); dashboardChartInstance = null; }
+    return;
+  }
+
+  const escuelas = vis.filter(s => (s.tipoEntidad || 'Escuela') === 'Escuela').length;
+  const empresas = vis.filter(s => s.tipoEntidad === 'Empresa').length;
+  const sinActividad = vis.filter(s => s.st === 'sin').length;
+
+  // Misma fuente de verdad que el ranking de actividades: catálogo oficial + lo que no calza
+  // (marcado como "sin confirmar"), para que el total refleje TODA la actividad capturada y no
+  // se sesgue por dejar fuera texto que no coincide exacto con el catálogo.
+  const { grupoEscuela, grupoEmpresa, extraEscuela, extraEmpresa } = contarActividadesBDDPorGrupo(vis);
+  const combinadas = [
+    ...grupoEscuela.filter(([,c]) => c > 0).map(([tipo, count]) => ({ tipo, count, grupo: 'Escuela' })),
+    ...grupoEmpresa.filter(([,c]) => c > 0).map(([tipo, count]) => ({ tipo, count, grupo: 'Empresa' })),
+    ...extraEscuela.map(([tipo, count]) => ({ tipo: `${tipo} (sin confirmar)`, count, grupo: 'Extra' })),
+    ...extraEmpresa.map(([tipo, count]) => ({ tipo: `${tipo} (sin confirmar)`, count, grupo: 'Extra' }))
+  ].sort((a, b) => b.count - a.count);
+
+  const totalActividades = combinadas.reduce((s, x) => s + x.count, 0);
+  const mejor = combinadas[0];
+  const peor = combinadas[combinadas.length - 1];
+
+  cont.innerHTML = `
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:2px">📊 Panorama de cobertura</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:16px">${nombreFiltroActivo()}</div>
+
+    <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap">
+      <div style="flex:1;min-width:110px;background:#f8f7f4;border-radius:8px;padding:10px 12px">
+        <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase">Registros</div>
+        <div style="font-size:20px;font-weight:700;font-family:'DM Mono',monospace">${vis.length.toLocaleString()}</div>
+      </div>
+      <div style="flex:1;min-width:110px;background:#f8f7f4;border-radius:8px;padding:10px 12px">
+        <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase">Escuelas</div>
+        <div style="font-size:20px;font-weight:700;font-family:'DM Mono',monospace;color:#5b21b6">${escuelas.toLocaleString()}</div>
+      </div>
+      <div style="flex:1;min-width:110px;background:#f8f7f4;border-radius:8px;padding:10px 12px">
+        <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase">Empresas</div>
+        <div style="font-size:20px;font-weight:700;font-family:'DM Mono',monospace;color:#0e7490">${empresas.toLocaleString()}</div>
+      </div>
+    </div>
+
+    <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">BDD por tipo de actividad (catálogo oficial)</div>
+    <div style="display:flex;gap:14px;align-items:flex-start">
+      <div style="background:#0d1117;border-radius:10px;padding:14px;flex:1;min-width:0;max-width:600px;max-height:340px;overflow-y:auto">
+        ${combinadas.length
+          ? `<div style="position:relative;height:${Math.max(combinadas.length * 38, 160)}px">
+               <canvas id="dash-chart-canvas"></canvas>
+             </div>`
+          : '<div style="text-align:center;padding:16px;font-size:11.5px;color:#9ca3af">Sin actividades del catálogo oficial en este filtro.</div>'}
+      </div>
+
+      <div style="width:220px;flex-shrink:0;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;gap:8px;font-size:9px;color:var(--muted);margin-bottom:-2px">
+          <span>🎓 <span style="color:#14b8a6;font-weight:700">■</span> Escuela</span>
+          <span>🏢 <span style="color:#f59e0b;font-weight:700">■</span> Empresa</span>
+          <span>🔍 <span style="color:#9ca3af;font-weight:700">■</span> Sin confirmar</span>
+        </div>
+        ${mejor ? `<div style="background:#f8f7f4;border-radius:8px;padding:10px 12px">
+          <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:3px">📌 Mejor actividad</div>
+          <div style="font-size:12.5px;font-weight:700;color:#111827;line-height:1.3">${mejor.tipo}</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:1px">${mejor.count} registros · ${Math.round(mejor.count/totalActividades*100)}% · ${mejor.grupo}</div>
+        </div>` : ''}
+        ${(peor && peor !== mejor) ? `<div style="background:#f8f7f4;border-radius:8px;padding:10px 12px">
+          <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:3px">📉 Menos frecuente</div>
+          <div style="font-size:12.5px;font-weight:700;color:#111827;line-height:1.3">${peor.tipo}</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:1px">${peor.count} registros · ${Math.round(peor.count/totalActividades*100)}% · ${peor.grupo}</div>
+        </div>` : ''}
+        <div style="background:#f8f7f4;border-radius:8px;padding:10px 12px" title="Registros que no han tenido ninguna visita ni actividad todavía">
+          <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:3px">🚫 Sin ninguna actividad aún</div>
+          <div style="font-size:16px;font-weight:700;color:#9ca3af;font-family:'DM Mono',monospace">${sinActividad.toLocaleString()} <span style="font-size:11px;font-weight:400;color:#9ca3af">de ${vis.length.toLocaleString()}</span></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  if (dashboardChartInstance) { dashboardChartInstance.destroy(); dashboardChartInstance = null; }
+  if (combinadas.length) {
+    const ctx = document.getElementById('dash-chart-canvas').getContext('2d');
+    const maxValor = Math.max(...combinadas.map(x => x.count));
+    const colorPorGrupo = g => g === 'Empresa' ? '#f59e0b' : g === 'Extra' ? '#9ca3af' : '#14b8a6';
+
+    // Dibuja el valor absoluto y el % al final de cada barra, para que se lea sin hover.
+    const valorAlFinalBarra = {
+      id: 'valorAlFinalBarra',
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        chart.getDatasetMeta(0).data.forEach((bar, i) => {
+          const item = combinadas[i];
+          const pct = Math.round(item.count / totalActividades * 100);
+          ctx.save();
+          ctx.fillStyle = '#e5e7eb';
+          ctx.font = "600 12px 'DM Sans', sans-serif";
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${item.count} (${pct}%)`, bar.x + 8, bar.y);
+          ctx.restore();
+        });
+      }
+    };
+
+    dashboardChartInstance = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: combinadas.map(x => x.tipo),
+        datasets: [{
+          data: combinadas.map(x => x.count),
+          backgroundColor: combinadas.map(x => colorPorGrupo(x.grupo)),
+          borderRadius: 4,
+          barThickness: 26,
+          categoryPercentage: 0.9,
+          barPercentage: 0.9
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: { padding: { right: 60 } },
+        plugins: { legend: { display: false } },
+        scales: {
+          x: {
+            suggestedMax: maxValor * 1.3,
+            ticks: { color: '#9ca3af', font: { size: 10 } },
+            grid: { color: '#1f2937' }
+          },
+          y: { ticks: { color: '#e5e7eb', font: { size: 11.5 } }, grid: { display: false } }
+        }
+      },
+      plugins: [valorAlFinalBarra]
+    });
+  }
+}
+
+function toggleFiltros() {
+  const wrap = document.getElementById('filtros-wrap');
+  const btn = document.getElementById('btn-toggle-filtros');
+  const oculto = wrap.style.display === 'none';
+  wrap.style.display = oculto ? 'contents' : 'none';
+  btn.textContent = oculto ? '▾ Filtros' : '▸ Filtros';
+  btn.style.borderColor = oculto ? 'var(--border)' : '#2563eb';
+  btn.style.color = oculto ? 'var(--text)' : '#2563eb';
+  // Al ocultar los filtros, el header se hace más chico y el mapa gana espacio —
+  // hay que avisarle a Leaflet que su contenedor cambió, si no se ve cortado.
+  setTimeout(() => map.invalidateSize(), 60);
+}
+
 function toggleRanking() {
   const panel = document.getElementById('ranking');
   const btn = document.getElementById('btn-panel');
@@ -2772,6 +3054,9 @@ function toggleRanking() {
   btn.style.borderColor = visible ? 'var(--border)' : '#f97316';
   btn.style.color = visible ? 'var(--text)' : '#c2410c';
   btn.style.background = visible ? 'var(--bg)' : '#fff7ed';
+  // El mapa no se entera solo de que su contenedor cambió de tamaño — hay que avisarle
+  // explícitamente, o se queda "cortado" mostrando solo la parte que tenía antes.
+  setTimeout(() => map.invalidateSize(), 60);
 }
 
 // ── PERSISTENCIA DEL CATÁLOGO COMPLETO EN FIREBASE ──────────────────────────
