@@ -515,6 +515,8 @@ const CAMPUS_ALIAS = {
   'CORBUSÉ Parque Hundido': 'Parque Hundido',
   'CORBUSÉ campus Santa Mónica': 'Santa Mónica',
   'Cest Tapachula': 'CEST Tapachula',
+  'Mexicali/Cuauhtémoc': 'Mexicali',
+  'Mexicali/Cuauhtemoc': 'Mexicali',
 };
 const CAMPUS_CANONICOS = Object.keys(CAMPUS_COORDS);
 // Quita acentos para comparar de forma más tolerante ("Queretaro" == "Querétaro")
@@ -831,7 +833,16 @@ function renderCampusPins() {
       </div>`,
       {maxWidth: 290}
     );
-    m.on('click', () => { selectCampusFromMap(name); showCampusPanel(name); m.openPopup(); });
+    m.campusName = name; // para poder re-ubicar este marcador después de un re-render
+    m.on('click', () => {
+      selectCampusFromMap(name);
+      showCampusPanel(name);
+      // El clic dispara un filtrado que reconstruye todos los pines de campus (renderCampusPins),
+      // así que el marcador "m" original ya no existe en el mapa — hay que re-encontrar la versión
+      // nueva para poder abrir su popup (si no, el popup nunca se llega a mostrar).
+      const nuevoMarker = campusPins.find(p => p.campusName === name);
+      if (nuevoMarker) nuevoMarker.openPopup();
+    });
     m.addTo(map);
     campusPins.push(m);
   });
@@ -1520,7 +1531,7 @@ function pintarMiniMapaRuta(puntos) {
     // Clic: mismo tipo de info que el mapa principal (usando el registro real en RAW si existe)
     const s = p.registro;
     const stLabel = !s ? '' : s.st==='bdd' ? '🟠 Visitada con BDD' : s.st==='cita' ? '🔵 Programada' : s.st==='visitada' ? '🟢 Visitada sin BDD' : '⚫ Sin actividad';
-    const gmapsUrlMini = (s && s.coordAprox && s.dir)
+    const gmapsUrlMini = (s && s.dir)
       ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(s.dir)
       : 'https://www.google.com/maps?q=' + p.coords[0] + ',' + p.coords[1];
     const popupHTML = `
@@ -2027,9 +2038,10 @@ function render() {
 
     // Clic (información completa): popup con auto-pan (Leaflet reacomoda el mapa para que se vea
     // completo, sin moverlo tú) + botón directo a Google Maps.
-    // Si la ubicación es aproximada (sin coordenada real), el link usa la DIRECCIÓN de texto
-    // para que Google Maps busque el domicilio real, en vez de las coordenadas jitter del pin.
-    const gmapsUrl = (s.coordAprox && s.dir)
+    // El link SIEMPRE usa la dirección de texto cuando existe (es la fuente de verdad, la misma
+    // que se muestra en pantalla) — así nunca se abre un lugar distinto al que dice el cuadro,
+    // sin importar si la coordenada guardada resultó estar mal marcada como "confirmada".
+    const gmapsUrl = s.dir
       ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(s.dir)
       : 'https://www.google.com/maps?q=' + s.coords[0] + ',' + s.coords[1];
     m.bindPopup(`
