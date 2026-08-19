@@ -2615,6 +2615,12 @@ function loadExcel(event) {
       const catalogoEmp = {};
       PROSPECTOS_EMPRESAS.forEach(p => { catalogoEmp[normNombre(p.n)+'|'+p.c] = p; });
 
+      // Antes de comparar, se corrige el nombre de campus de TODO lo que ya está en RAW —
+      // así, registros viejos guardados con un nombre sin normalizar (ej. "Mexicali/Cuauhtémoc"
+      // en vez de "Mexicali", de una carga anterior a este arreglo) quedan al día y sí hacen
+      // match correctamente contra los datos nuevos, en vez de crear un duplicado.
+      RAW.forEach(s => { s.c = normCampus(s.c); });
+
       // Índice de lo que YA está en RAW (catálogo integrado + cargas anteriores), por nombre+campus
       const rawIndex = {};
       RAW.forEach(s => { rawIndex[normNombre(s.e)+'|'+s.c] = s; });
@@ -2839,6 +2845,10 @@ function intentarCargarCatalogoNube(manual) {
       const nuevoRAW = reconstruirRAWDesdeFirebase(datos.raw);
       RAW.length = 0;
       nuevoRAW.forEach(s => RAW.push(s));
+
+      // Corrige nombres de campus que hayan quedado sin normalizar de una carga anterior
+      // (ej. "Mexicali/Cuauhtémoc" en vez de "Mexicali"), para que no aparezcan duplicados.
+      RAW.forEach(s => { s.c = normCampus(s.c); });
 
       // Recalcular coordenadas (reales si existen, jitter si no) para todos los registros
       const campusCount2 = {}, campusIdx2 = {};
