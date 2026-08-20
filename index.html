@@ -983,6 +983,28 @@ function contarActividadesBDDPorGrupo(vis) {
   };
 }
 
+// Suma la BDD REAL (registros captados) por tipo de actividad oficial — a diferencia de
+// contarActividadesBDDPorGrupo, que solo cuenta CUÁNTAS VECES se hizo cada actividad, esto
+// suma cuánta base de datos produjo cada una. Requiere el detalle por actividad individual
+// (actividadesDetalle, con su propio campo de registros) — solo existe para escuelas/empresas
+// cargadas con el Excel de actividad que trae fecha y registros por bloque; los registros del
+// catálogo base (sin ese detalle) no contribuyen aquí, aunque sí tengan BDD acumulada en total.
+function contarBDDPorActividad(vis) {
+  const bddEscuela = {}, bddEmpresa = {};
+  vis.forEach(s => {
+    if (!s.actividadesDetalle || !s.actividadesDetalle.length) return;
+    const esEmpresa = s.tipoEntidad === 'Empresa';
+    const destino = esEmpresa ? bddEmpresa : bddEscuela;
+    const mapa = esEmpresa ? EMPRESA_ACTS_MAP : ESCUELA_ACTS_MAP;
+    s.actividadesDetalle.forEach(a => {
+      if (!a.tipo) return;
+      const canonico = mapa[normalizarTextoActividad(a.tipo)];
+      if (canonico) destino[canonico] = (destino[canonico]||0) + (parseInt(a.registros)||0);
+    });
+  });
+  return { bddEscuela, bddEmpresa };
+}
+
 function renderRankingAct(vis) {
   const { grupoEscuela, grupoEmpresa, totalEscuela, totalEmpresa,
           extraEscuela, extraEmpresa, totalEscuelaExtra, totalEmpresaExtra } = contarActividadesBDDPorGrupo(vis);
@@ -2910,16 +2932,22 @@ function renderDashboardGrafica() {
   // (marcado como "sin confirmar"), para que el total refleje TODA la actividad capturada y no
   // se sesgue por dejar fuera texto que no coincide exacto con el catálogo.
   const { grupoEscuela, grupoEmpresa, extraEscuela, extraEmpresa } = contarActividadesBDDPorGrupo(vis);
+  // BDD real por actividad oficial (diferenciador: cuántas veces se hizo VS cuánta base trajo)
+  const { bddEscuela, bddEmpresa } = contarBDDPorActividad(vis);
+
   const combinadas = [
-    ...grupoEscuela.filter(([,c]) => c > 0).map(([tipo, count]) => ({ tipo, count, grupo: 'Escuela' })),
-    ...grupoEmpresa.filter(([,c]) => c > 0).map(([tipo, count]) => ({ tipo, count, grupo: 'Empresa' })),
-    ...extraEscuela.map(([tipo, count]) => ({ tipo: `${tipo} (sin confirmar)`, count, grupo: 'Extra' })),
-    ...extraEmpresa.map(([tipo, count]) => ({ tipo: `${tipo} (sin confirmar)`, count, grupo: 'Extra' }))
+    ...grupoEscuela.filter(([,c]) => c > 0).map(([tipo, count]) => ({ tipo, count, bdd: bddEscuela[tipo]||0, tieneBDD: true, grupo: 'Escuela' })),
+    ...grupoEmpresa.filter(([,c]) => c > 0).map(([tipo, count]) => ({ tipo, count, bdd: bddEmpresa[tipo]||0, tieneBDD: true, grupo: 'Empresa' })),
+    ...extraEscuela.map(([tipo, count]) => ({ tipo: `${tipo} (sin confirmar)`, count, bdd: 0, tieneBDD: false, grupo: 'Extra' })),
+    ...extraEmpresa.map(([tipo, count]) => ({ tipo: `${tipo} (sin confirmar)`, count, bdd: 0, tieneBDD: false, grupo: 'Extra' }))
   ].sort((a, b) => b.count - a.count);
 
   const totalActividades = combinadas.reduce((s, x) => s + x.count, 0);
+  const totalBDD = combinadas.reduce((s, x) => s + x.bdd, 0);
   const mejor = combinadas[0];
   const peor = combinadas[combinadas.length - 1];
+  const conBDD = combinadas.filter(x => x.tieneBDD && x.bdd > 0);
+  const mejorPorBDD = conBDD.length ? conBDD.slice().sort((a,b)=>b.bdd-a.bdd)[0] : null;
 
   cont.innerHTML = `
     <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:2px">📊 Panorama de cobertura</div>
@@ -2940,7 +2968,7 @@ function renderDashboardGrafica() {
       </div>
     </div>
 
-    <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">BDD por tipo de actividad (catálogo oficial)</div>
+    <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Cantidad de actividades por tipo, y BDD real que trajo cada una (catálogo oficial)</div>
     <div style="display:flex;gap:14px;align-items:flex-start">
       <div style="background:#0d1117;border-radius:10px;padding:14px;flex:1;min-width:0;max-width:600px;max-height:340px;overflow-y:auto">
         ${combinadas.length
@@ -2950,27 +2978,37 @@ function renderDashboardGrafica() {
           : '<div style="text-align:center;padding:16px;font-size:11.5px;color:#9ca3af">Sin actividades del catálogo oficial en este filtro.</div>'}
       </div>
 
-      <div style="width:220px;flex-shrink:0;display:flex;flex-direction:column;gap:10px">
-        <div style="display:flex;gap:8px;font-size:9px;color:var(--muted);margin-bottom:-2px">
+      <div style="width:230px;flex-shrink:0;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;gap:8px;font-size:9px;color:var(--muted);margin-bottom:-2px;flex-wrap:wrap">
           <span>🎓 <span style="color:#14b8a6;font-weight:700">■</span> Escuela</span>
           <span>🏢 <span style="color:#f59e0b;font-weight:700">■</span> Empresa</span>
           <span>🔍 <span style="color:#9ca3af;font-weight:700">■</span> Sin confirmar</span>
         </div>
+        ${mejorPorBDD ? `<div style="background:#f8f7f4;border-radius:8px;padding:10px 12px">
+          <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:3px">🏆 Más BDD genera</div>
+          <div style="font-size:12.5px;font-weight:700;color:#111827;line-height:1.3">${mejorPorBDD.tipo}</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:1px">${mejorPorBDD.bdd} BDD · ${mejorPorBDD.count} actividades · ${(mejorPorBDD.bdd/mejorPorBDD.count).toFixed(1)} BDD/actividad</div>
+        </div>` : ''}
         ${mejor ? `<div style="background:#f8f7f4;border-radius:8px;padding:10px 12px">
-          <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:3px">📌 Mejor actividad</div>
+          <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:3px">📌 Más frecuente</div>
           <div style="font-size:12.5px;font-weight:700;color:#111827;line-height:1.3">${mejor.tipo}</div>
-          <div style="font-size:11px;color:#6b7280;margin-top:1px">${mejor.count} registros · ${Math.round(mejor.count/totalActividades*100)}% · ${mejor.grupo}</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:1px">${mejor.count} actividades${mejor.tieneBDD ? ` · ${mejor.bdd} BDD` : ''} · ${Math.round(mejor.count/totalActividades*100)}%</div>
         </div>` : ''}
         ${(peor && peor !== mejor) ? `<div style="background:#f8f7f4;border-radius:8px;padding:10px 12px">
           <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:3px">📉 Menos frecuente</div>
           <div style="font-size:12.5px;font-weight:700;color:#111827;line-height:1.3">${peor.tipo}</div>
-          <div style="font-size:11px;color:#6b7280;margin-top:1px">${peor.count} registros · ${Math.round(peor.count/totalActividades*100)}% · ${peor.grupo}</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:1px">${peor.count} actividades${peor.tieneBDD ? ` · ${peor.bdd} BDD` : ''} · ${Math.round(peor.count/totalActividades*100)}%</div>
         </div>` : ''}
         <div style="background:#f8f7f4;border-radius:8px;padding:10px 12px" title="Registros que no han tenido ninguna visita ni actividad todavía">
           <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:3px">🚫 Sin ninguna actividad aún</div>
           <div style="font-size:16px;font-weight:700;color:#9ca3af;font-family:'DM Mono',monospace">${sinActividad.toLocaleString()} <span style="font-size:11px;font-weight:400;color:#9ca3af">de ${vis.length.toLocaleString()}</span></div>
         </div>
       </div>
+    </div>
+    <div style="font-size:9.5px;color:var(--muted);line-height:1.5;margin-top:8px">
+      ⚠️ La cifra de BDD junto a cada barra solo se calcula para escuelas/empresas cargadas con el
+      detalle de actividad por fecha (Excel de actividad diario) — las demás muestran solo la cantidad
+      de actividades, aunque sí tengan BDD acumulada en su total general.
     </div>
   `;
 
@@ -2980,7 +3018,8 @@ function renderDashboardGrafica() {
     const maxValor = Math.max(...combinadas.map(x => x.count));
     const colorPorGrupo = g => g === 'Empresa' ? '#f59e0b' : g === 'Extra' ? '#9ca3af' : '#14b8a6';
 
-    // Dibuja el valor absoluto y el % al final de cada barra, para que se lea sin hover.
+    // Dibuja, al final de cada barra: cantidad de actividades siempre, y junto la BDD real
+    // que trajo esa actividad cuando el dato existe — para diferenciar claramente ambas cosas.
     const valorAlFinalBarra = {
       id: 'valorAlFinalBarra',
       afterDatasetsDraw(chart) {
@@ -2988,12 +3027,15 @@ function renderDashboardGrafica() {
         chart.getDatasetMeta(0).data.forEach((bar, i) => {
           const item = combinadas[i];
           const pct = Math.round(item.count / totalActividades * 100);
+          const texto = item.tieneBDD
+            ? `${item.count} act. (${pct}%) · ${item.bdd} BDD`
+            : `${item.count} act. (${pct}%) · BDD n/d`;
           ctx.save();
-          ctx.fillStyle = '#e5e7eb';
-          ctx.font = "600 12px 'DM Sans', sans-serif";
+          ctx.fillStyle = item.tieneBDD ? '#e5e7eb' : '#6b7280';
+          ctx.font = "600 11.5px 'DM Sans', sans-serif";
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
-          ctx.fillText(`${item.count} (${pct}%)`, bar.x + 8, bar.y);
+          ctx.fillText(texto, bar.x + 8, bar.y);
           ctx.restore();
         });
       }
@@ -3016,7 +3058,7 @@ function renderDashboardGrafica() {
         indexAxis: 'y',
         responsive: true,
         maintainAspectRatio: false,
-        layout: { padding: { right: 60 } },
+        layout: { padding: { right: 110 } },
         plugins: { legend: { display: false } },
         scales: {
           x: {
