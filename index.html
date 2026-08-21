@@ -352,7 +352,7 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
 
   <div id="statsbar">
     <div class="stat"><div class="stat-n" id="s-total">3,479</div><div class="stat-l" id="s-total-label">Total general</div></div>
-    <div class="stat"><div class="stat-n n-sin" id="s-sin">0</div><div class="stat-l">Sin actividad</div></div>
+    <div class="stat" id="s-sin-wrap" title="Registros que nunca han tenido ninguna actividad registrada"><div class="stat-n n-sin" id="s-sin">0</div><div class="stat-l">Sin actividad</div></div>
     <div class="stat"><div class="stat-n n-bdd" id="s-bdd">0</div><div class="stat-l">Visitada con BDD</div></div>
     <div class="stat"><div class="stat-n n-vis" id="s-vis">0</div><div class="stat-l">Visitadas sin BDD</div></div>
     <div class="stat"><div class="stat-n n-bdd" id="s-reg">0</div><div class="stat-l">BDD captada</div></div>
@@ -2066,6 +2066,28 @@ function getVisible() {
   });
 }
 
+// Igual que getVisible(), pero IGNORA el filtro de semana/año (aplica el resto de filtros
+// normalmente). Se usa para calcular "Sin Actividad" contra el universo total asignado cuando
+// hay una semana filtrada — porque "Total General" en ese caso ya solo cuenta a quienes SÍ
+// tuvieron actividad esa semana, y "Sin Actividad" necesita medirse contra un universo distinto
+// (todo lo asignado) para no dar siempre 0.
+function getVisibleSinFiltroSemana() {
+  return RAW.filter(s => {
+    if (active.zona   && s.z  !== active.zona)   return false;
+    if (active.campus && s.c  !== active.campus) return false;
+    if (active.tipoEntidad && (s.tipoEntidad || 'Escuela') !== active.tipoEntidad) return false;
+    if (active.exec   && s.ej !== active.exec)   return false;
+    if (active.actor) {
+      if (active.actor === 'ejecutivo' && (s.st==='sin' || !s.ej || s.ej==='—')) return false;
+      if (active.actor === 'jefe'      && !s.visitadoJefe)      return false;
+      if (active.actor === 'rector'    && !s.visitadoRector)    return false;
+    }
+    if (active.status && s.st !== active.status) return false;
+    if (active.tipo   && !(s.tipos||[]).includes(active.tipo)) return false;
+    return true;
+  });
+}
+
 // Muestra siempre con claridad qué año y semana se están viendo, para no confundir ciclos
 // que comparten el mismo número de semana en años distintos.
 function updateCicloIndicator() {
@@ -2191,7 +2213,15 @@ function render() {
   const total = vis.length;
   const bdd = vis.filter(s=>s.st==='bdd').length;
   const vis2 = vis.filter(s=>s.st==='visitada').length;
-  const sin = vis.filter(s=>s.st==='sin').length;
+  // "Sin Actividad": si hay semana/año filtrado, "Total General" de arriba ya solo cuenta a
+  // quienes tuvieron actividad esa semana (por diseño) — por lo que "Sin Actividad" no puede
+  // medirse contra ese mismo universo (siempre daría 0). En su lugar, se mide contra el universo
+  // total asignado (mismos filtros de zona/campus/ejecutivo/etc., pero SIN el filtro de semana),
+  // como la cantidad que NO tuvo actividad en esa semana en particular. Sin semana filtrada, se
+  // mantiene el comportamiento de siempre: registros que nunca han tenido ninguna actividad.
+  const sin = (active.anio || active.semana)
+    ? getVisibleSinFiltroSemana().filter(s => !coincideSemanaAnio(s, active.anio, active.semana)).length
+    : vis.filter(s=>s.st==='sin').length;
   let reg = 0;
   vis.forEach(s=>{ if(s.reg){const n=parseInt(s.reg);if(!isNaN(n))reg+=n;}});
   const cubierta = bdd + vis2;
@@ -2219,6 +2249,9 @@ function render() {
     active.tipoEntidad === 'Escuela' ? 'Total escuelas' :
     'Total general';
   document.getElementById('s-sin').textContent = sin.toLocaleString();
+  document.getElementById('s-sin-wrap').title = (active.anio || active.semana)
+    ? 'Del total de registros asignados (sin filtrar por semana), cuántos NO tuvieron actividad en la semana/año seleccionados'
+    : 'Registros que nunca han tenido ninguna actividad registrada';
   document.getElementById('s-bdd').textContent = bdd.toLocaleString();
   document.getElementById('s-vis').textContent = vis2.toLocaleString();
   document.getElementById('s-reg').textContent = reg.toLocaleString();
