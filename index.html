@@ -648,7 +648,14 @@ function initFilters() {
   fill('f-zona',   ['Norte','Bajío','Centro','Sur','Corbusé'],  'Todas las zonas');
   fill('f-campus', uniq([...RAW.map(s=>s.c), 'Santa Mónica', 'Parque Hundido']),  'Todos los campus');
   fill('f-exec',   uniq(RAW.map(s=>s.ej).filter(e=>e&&e!=='—')), 'Todos los ejecutivos');
-  const anios = uniq(RAW.filter(s=>s.anio).map(s=>String(s.anio))).sort((a,b)=>b-a);
+  // Incluye cualquier año que aparezca en CUALQUIERA de las 6 actividades de cada registro,
+  // no solo el de la actividad más reciente — consistente con el filtro de semana/año.
+  const aniosSet = new Set();
+  RAW.forEach(s => {
+    const pares = (s.semanasTodas && s.semanasTodas.length) ? s.semanasTodas : [{ anio: s.anio }];
+    pares.forEach(p => { if (p.anio) aniosSet.add(String(p.anio)); });
+  });
+  const anios = [...aniosSet].sort((a,b)=>b-a);
   fill('f-anio', anios, 'Todos los años');
   updateSemanaOptions();
 }
@@ -2028,6 +2035,19 @@ function renderPanel(vis) {
   else                             renderProyeccion(vis);
 }
 
+// Revisa si un registro tiene alguna actividad (de sus 6) que caiga en el año/semana filtrados.
+// Usa semanasTodas si existe (registros cargados con la version actual); si un registro viene
+// de datos antiguos sin ese campo, cae de regreso al único sem/anio que ya tenia (comportamiento
+// previo), para no perder registros existentes mientras se sigue recargando el catalogo.
+function coincideSemanaAnio(s, anioFiltro, semanaFiltro) {
+  const pares = (s.semanasTodas && s.semanasTodas.length) ? s.semanasTodas : [{ sem: s.sem, anio: s.anio }];
+  return pares.some(p => {
+    if (anioFiltro && String(p.anio||'') !== anioFiltro) return false;
+    if (semanaFiltro && p.sem !== semanaFiltro) return false;
+    return true;
+  });
+}
+
 function getVisible() {
   return RAW.filter(s => {
     if (active.zona   && s.z  !== active.zona)   return false;
@@ -2039,8 +2059,7 @@ function getVisible() {
       if (active.actor === 'jefe'      && !s.visitadoJefe)      return false;
       if (active.actor === 'rector'    && !s.visitadoRector)    return false;
     }
-    if (active.anio && String(s.anio||'') !== active.anio) return false;
-    if (active.semana && s.sem !== active.semana) return false;
+    if ((active.anio || active.semana) && !coincideSemanaAnio(s, active.anio, active.semana)) return false;
     if (active.status && s.st !== active.status) return false;
     if (active.tipo   && !(s.tipos||[]).includes(active.tipo)) return false;
     return true;
@@ -2499,6 +2518,23 @@ function calcularSemanaISO(actividades) {
   return { sem: `Semana ${pad2(getISOWeek(maxFecha))}`, anio: getISOWeekYear(maxFecha) };
 }
 
+// A diferencia de calcularSemanaISO (que solo toma la actividad MÁS RECIENTE), esta función
+// regresa TODAS las semanas/años distintos en los que el registro tuvo alguna de sus 6
+// actividades. Se usa para el filtro de Semana/Año: una escuela o empresa debe aparecer en el
+// filtro de una semana si CUALQUIERA de sus 6 actividades cayó ahí, no solo la más reciente.
+function todasLasSemanasISO(actividades) {
+  const vistos = new Set();
+  const resultado = [];
+  actividades.forEach(a => {
+    if (!a.fechaDate) return;
+    const anio = getISOWeekYear(a.fechaDate);
+    const sem = `Semana ${pad2(getISOWeek(a.fechaDate))}`;
+    const clave = anio + '|' + sem;
+    if (!vistos.has(clave)) { vistos.add(clave); resultado.push({ sem, anio }); }
+  });
+  return resultado;
+}
+
 // Determina estatus a partir de los tipos de actividad + registros
 function calcularEstatus(tipos, regTotal) {
   const tiposLower = tipos.map(t => t.toLowerCase());
@@ -2646,6 +2682,7 @@ function loadExcel(event) {
           const st = calcularEstatus(tipos, regTotal);
           const ultimaAct = actividades[actividades.length-1];
           const semAnio = calcularSemanaISO(actividades);
+          const semanasTodas = todasLasSemanasISO(actividades);
           const campusNorm = normCampus(normHeader(row,'Campus').toString().trim());
 
           newRaw.push({
@@ -2656,6 +2693,7 @@ function loadExcel(event) {
             cl: normHeader(row,'Clasificación').toString().trim() || 'C',
             sem: semAnio.sem,
             anio: semAnio.anio,
+            semanasTodas,
             res: ultimaAct ? ultimaAct.resultado : '',
             reg: regTotal ? regTotal.toString() : '',
             st, tipos,
@@ -2684,6 +2722,7 @@ function loadExcel(event) {
           const st = calcularEstatus(tipos, regTotal);
           const ultimaAct = actividades[actividades.length-1];
           const semAnio = calcularSemanaISO(actividades);
+          const semanasTodas = todasLasSemanasISO(actividades);
           const campusNorm = normCampus(normHeader(row,'Campus').toString().trim());
 
           newRaw.push({
@@ -2694,6 +2733,7 @@ function loadExcel(event) {
             cl: normHeader(row,'Clasificación').toString().trim() || 'C',
             sem: semAnio.sem,
             anio: semAnio.anio,
+            semanasTodas,
             res: ultimaAct ? ultimaAct.resultado : '',
             // "BDD por Empresa" es la columna oficial con el total de base de datos ya obtenido
             // para esa empresa; si viene en el Excel, tiene prioridad sobre la suma de registros
@@ -2771,6 +2811,7 @@ function loadExcel(event) {
           existente.cl = s.cl;
           existente.sem = s.sem;
           existente.anio = s.anio;
+          existente.semanasTodas = s.semanasTodas;
           existente.res = s.res;
           existente.reg = s.reg;
           existente.st = s.st;
