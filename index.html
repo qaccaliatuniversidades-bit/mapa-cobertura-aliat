@@ -57,7 +57,7 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
 .stat:last-child{border-right:none}
 .stat-n{font-size:20px;font-weight:600;color:var(--text);font-family:'DM Mono',monospace;line-height:1.2}
 .stat-l{font-size:10px;color:var(--muted);font-weight:500;text-transform:uppercase;letter-spacing:.04em;margin-top:1px}
-.n-sin{color:#6b7280}.n-bdd{color:#f97316}.n-cita{color:#2563eb}.n-vis{color:#16a34a}
+.n-sin{color:#6b7280}.n-bdd{color:#f97316}.n-vis{color:#16a34a}
 
 /* MAP */
 #map{flex:1}
@@ -92,7 +92,6 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
 .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:600}
 .b-sin{background:#f3f4f6;color:#374151}
 .b-bdd{background:#fff7ed;color:#7c2d12}
-.b-cita{background:#eff6ff;color:#1e3a8a}
 .b-vis{background:#f0fdf4;color:#14532d}
 
 /* EMPTY */
@@ -251,7 +250,6 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
         <option value="">Todos los estatus</option>
         <option value="sin">⚫ Sin actividad</option>
         <option value="bdd">🟠 Visitada con BDD</option>
-        <option value="cita">🔵 Programada</option>
         <option value="visitada">🟢 Visitada sin BDD</option>
       </select>
       <select id="f-tipo" onchange="applyFilters()">
@@ -298,7 +296,6 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
     <div class="legend">
       <div class="leg"><div class="leg-dot" style="background:#9ca3af;border-color:#6b7280"></div>Sin actividad</div>
       <div class="leg"><div class="leg-dot" style="background:#f97316;border-color:#c2410c"></div>Visitada con BDD</div>
-      <div class="leg"><div class="leg-dot" style="background:#2563eb;border-color:#1e40af"></div>Programada</div>
       <div class="leg"><div class="leg-dot" style="background:#16a34a;border-color:#14532d"></div>Visitada sin BDD</div>
       <div class="leg"><div class="leg-dot" style="background:#9ca3af;border-color:#6b7280;border-style:dashed"></div>Ubicación aproximada</div>
       <div class="hdiv"></div>
@@ -357,7 +354,6 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
     <div class="stat"><div class="stat-n" id="s-total">3,479</div><div class="stat-l" id="s-total-label">Total general</div></div>
     <div class="stat"><div class="stat-n n-sin" id="s-sin">0</div><div class="stat-l">Sin actividad</div></div>
     <div class="stat"><div class="stat-n n-bdd" id="s-bdd">0</div><div class="stat-l">Visitada con BDD</div></div>
-    <div class="stat"><div class="stat-n n-cita" id="s-cita">0</div><div class="stat-l">Programadas</div></div>
     <div class="stat"><div class="stat-n n-vis" id="s-vis">0</div><div class="stat-l">Visitadas sin BDD</div></div>
     <div class="stat"><div class="stat-n n-bdd" id="s-reg">0</div><div class="stat-l">BDD captada</div></div>
     <div class="stat" title="Estimado: promedio BDD por escuela × total escuelas del universo filtrado"><div class="stat-n" style="color:#7c3aed" id="s-potencial">—</div><div class="stat-l">Potencial base</div></div>
@@ -514,7 +510,7 @@ const CAMPUS_INFO = {
   'Saltillo':{inst:'UNEA',dir:'Calle Carmen Aguirre de Fuentes #525, Zona Centro.',ciudad:'Saltillo',estado:'Coahuila'},
   'Santa Mónica':{inst:'CORBUSÉ',dir:'C. Benito Juárez 40-local 108, Col, Ex-hacienda de Santa Monica, 54050 Tlalnepantla, Méx.',ciudad:'Tlalnepantla de Baz',estado:'Estado de México'},
   'Saucito':{inst:'UTAN',dir:'Av. Fray Diego de la Magdalena 42, El Saucito, 78110 San Luis, S.L.P.',ciudad:'San Luis Potosí',estado:'San Luis Potosí'},
-  'Tapachula':{inst:'CEST',dir:'Prolongación 10a. Sur #162, Hortalizas Japonesas Tapachula, Chiapas. C.P. 30799.',ciudad:'Tapachula',estado:'Chiapas'},
+  'Tapachula':{inst:'UVG',dir:'Prolongación 10a. Sur #162, Hortalizas Japonesas Tapachula, Chiapas. C.P. 30799.',ciudad:'Tapachula',estado:'Chiapas'},
   'Tequis':{inst:'UTAN',dir:'Av. Cuauhtémoc #485, de Tequisquiapan, C.P. 78230 San Luis, S.L.P.',ciudad:'San Luis Potosí',estado:'San Luis Potosí'},
   'Tlalnepantla':{inst:'ETAC',dir:'Viveros de Asís #96, habitacional Viveros de la Loma, C.P. 54080, Tlalnepantla, Méx.',ciudad:'Tlalnepantla de Baz',estado:'Estado de México'},
   'Tlatelolco':{inst:'ETAC',dir:'Manuel González #113, Colonia \"San Simón Tolnahuac\", C.P. 06920, delegación Cuauhtémoc.',ciudad:'Cuauhtémoc',estado:'Ciudad de México'},
@@ -1207,13 +1203,12 @@ function renderRankingCampus(vis) {
   const map2 = {};
   vis.forEach(s => {
     if (!s.c) return;
-    if (!map2[s.c]) map2[s.c] = {total:0, visitas:0, bdd:0, visitada:0, cita:0, regs:0};
+    if (!map2[s.c]) map2[s.c] = {total:0, visitas:0, bdd:0, visitada:0, regs:0};
     const d = map2[s.c];
     d.total++;
     if (s.st !== 'sin') d.visitas++;
     if (s.st === 'bdd')      d.bdd++;
     if (s.st === 'visitada') d.visitada++;
-    if (s.st === 'cita')     d.cita++;
     if (s.reg) { const n=parseInt(s.reg); if(!isNaN(n)) d.regs+=n; }
   });
   const sorted = Object.entries(map2)
@@ -1233,7 +1228,6 @@ function renderRankingCampus(vis) {
     const short  = campus.length > 13 ? campus.substring(0,12)+'…' : campus;
     const barBdd = Math.round(d.bdd      / d.total * 100);
     const barVis = Math.round(d.visitada / d.total * 100);
-    const barCit = Math.round(d.cita     / d.total * 100);
     const cobColor = pctCob>=50?'#16a34a':pctCob>=20?'#f97316':'#9ca3af';
     const isActive = active.campus === campus;
     return `<div onclick="filterByCampus('${campus.replace(/'/g,"\\'")}') "
@@ -1253,7 +1247,6 @@ function renderRankingCampus(vis) {
       <div style="height:5px;background:#f3f4f6;border-radius:3px;overflow:hidden;display:flex">
         <div style="height:100%;width:${barBdd}%;background:#f97316;transition:width .3s"></div>
         <div style="height:100%;width:${barVis}%;background:#16a34a;transition:width .3s"></div>
-        <div style="height:100%;width:${barCit}%;background:#2563eb;transition:width .3s"></div>
       </div>
     </div>`;
   }).join('') +
@@ -1293,13 +1286,12 @@ function renderRankingZonas(vis) {
   const map2 = {};
   vis.forEach(s => {
     if (!s.z) return;
-    if (!map2[s.z]) map2[s.z] = {total:0, visitas:0, bdd:0, visitada:0, cita:0, regs:0};
+    if (!map2[s.z]) map2[s.z] = {total:0, visitas:0, bdd:0, visitada:0, regs:0};
     const d = map2[s.z];
     d.total++;
     if (s.st !== 'sin') d.visitas++;
     if (s.st === 'bdd')      d.bdd++;
     if (s.st === 'visitada') d.visitada++;
-    if (s.st === 'cita')     d.cita++;
     if (s.reg) { const n=parseInt(s.reg); if(!isNaN(n)) d.regs+=n; }
   });
   const sorted = Object.entries(map2)
@@ -1317,7 +1309,6 @@ function renderRankingZonas(vis) {
     const medal  = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
     const barBdd = Math.round(d.bdd      / d.total * 100);
     const barVis = Math.round(d.visitada / d.total * 100);
-    const barCit = Math.round(d.cita     / d.total * 100);
     const cobColor = pctCob>=50?'#16a34a':pctCob>=20?'#f97316':'#9ca3af';
     const isActive = active.zona === zona;
     return `<div onclick="filterByZona('${zona.replace(/'/g,"\\'")}') "
@@ -1337,7 +1328,6 @@ function renderRankingZonas(vis) {
       <div style="height:5px;background:#f3f4f6;border-radius:3px;overflow:hidden;display:flex">
         <div style="height:100%;width:${barBdd}%;background:#f97316;transition:width .3s"></div>
         <div style="height:100%;width:${barVis}%;background:#16a34a;transition:width .3s"></div>
-        <div style="height:100%;width:${barCit}%;background:#2563eb;transition:width .3s"></div>
       </div>
     </div>`;
   }).join('');
@@ -1642,7 +1632,7 @@ function pintarMiniMapaRuta(puntos) {
 
     // Clic: mismo tipo de info que el mapa principal (usando el registro real en RAW si existe)
     const s = p.registro;
-    const stLabel = !s ? '' : s.st==='bdd' ? '🟠 Visitada con BDD' : s.st==='cita' ? '🔵 Programada' : s.st==='visitada' ? '🟢 Visitada sin BDD' : '⚫ Sin actividad';
+    const stLabel = !s ? '' : s.st==='bdd' ? '🟠 Visitada con BDD' : s.st==='visitada' ? '🟢 Visitada sin BDD' : '⚫ Sin actividad';
     const gmapsUrlMini = (s && s.dir)
       ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(s.dir)
       : 'https://www.google.com/maps?q=' + p.coords[0] + ',' + p.coords[1];
@@ -2119,7 +2109,6 @@ function render() {
     const m = L.marker(s.coords, {icon});
 
     const stLabel = s.st==='bdd' ? '<span style="color:#c2410c;font-weight:700">🟠 Visitada con BDD</span>'
-      : s.st==='cita' ? '<span style="color:#1e40af;font-weight:700">🔵 Programada</span>'
       : s.st==='visitada' ? '<span style="color:#14532d;font-weight:700">🟢 Visitada sin BDD</span>'
       : '<span style="color:#6b7280">⚫ Sin actividad</span>';
 
@@ -2182,12 +2171,11 @@ function render() {
   // Stats
   const total = vis.length;
   const bdd = vis.filter(s=>s.st==='bdd').length;
-  const cita = vis.filter(s=>s.st==='cita').length;
   const vis2 = vis.filter(s=>s.st==='visitada').length;
   const sin = vis.filter(s=>s.st==='sin').length;
   let reg = 0;
   vis.forEach(s=>{ if(s.reg){const n=parseInt(s.reg);if(!isNaN(n))reg+=n;}});
-  const cubierta = bdd + cita + vis2;
+  const cubierta = bdd + vis2;
   const pct = total > 0 ? Math.round(cubierta/total*100) : 0;
 
   // Potencial base: promedio BDD por escuela con reg conocido × total escuelas universo
@@ -2213,7 +2201,6 @@ function render() {
     'Total general';
   document.getElementById('s-sin').textContent = sin.toLocaleString();
   document.getElementById('s-bdd').textContent = bdd.toLocaleString();
-  document.getElementById('s-cita').textContent = cita.toLocaleString();
   document.getElementById('s-vis').textContent = vis2.toLocaleString();
   document.getElementById('s-reg').textContent = reg.toLocaleString();
   document.getElementById('s-potencial').textContent = potencial > 0 ? '~' + potencial.toLocaleString() : '—';
@@ -2229,10 +2216,9 @@ function showCampusPanel(name) {
   const escuelas = RAW.filter(s => s.c === name);
   const total    = escuelas.length;
   const bdd      = escuelas.filter(s=>s.st==='bdd').length;
-  const cita     = escuelas.filter(s=>s.st==='cita').length;
   const visitada = escuelas.filter(s=>s.st==='visitada').length;
   const sin      = escuelas.filter(s=>s.st==='sin').length;
-  const activas  = bdd + cita + visitada;
+  const activas  = bdd + visitada;
   const pct      = total > 0 ? Math.round(activas/total*100) : 0;
   let regs = 0;
   escuelas.forEach(s=>{ if(s.reg){const n=parseInt(s.reg);if(!isNaN(n))regs+=n;} });
@@ -2248,7 +2234,6 @@ function showCampusPanel(name) {
 
   const zona = escuelas[0]?.z || '—';
   const barBdd  = total>0?Math.round(bdd/total*100):0;
-  const barCita = total>0?Math.round(cita/total*100):0;
   const barVis  = total>0?Math.round(visitada/total*100):0;
   const cobColor = pct>=50?'#16a34a':pct>=20?'#f97316':'#6b7280';
 
@@ -2273,12 +2258,10 @@ function showCampusPanel(name) {
       <div style="height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden;display:flex">
         <div style="height:100%;width:${barBdd}%;background:#f97316;transition:width .3s"></div>
         <div style="height:100%;width:${barVis}%;background:#16a34a;transition:width .3s"></div>
-        <div style="height:100%;width:${barCita}%;background:#2563eb;transition:width .3s"></div>
       </div>
       <div style="display:flex;gap:8px;margin-top:5px;flex-wrap:wrap">
         <span style="font-size:9px;color:#f97316;font-weight:600">■ BDD ${bdd}</span>
         <span style="font-size:9px;color:#16a34a;font-weight:600">■ Vis ${visitada}</span>
-        <span style="font-size:9px;color:#2563eb;font-weight:600">■ Prog ${cita}</span>
         <span style="font-size:9px;color:#9ca3af;font-weight:600">■ Sin ${sin}</span>
       </div>
     </div>
@@ -2391,7 +2374,6 @@ function mostrarBitacoraCampus(campusName) {
 
 function showPanel(s) {
   const badge = s.st==='bdd' ? '<span class="badge b-bdd">🟠 Visitada con BDD</span>'
-    : s.st==='cita' ? '<span class="badge b-cita">🔵 Programada</span>'
     : s.st==='visitada' ? '<span class="badge b-vis">🟢 Visitada sin BDD</span>'
     : '<span class="badge b-sin">⚫ Sin actividad</span>';
   document.getElementById('pn').textContent = s.e;
@@ -2521,9 +2503,7 @@ function calcularSemanaISO(actividades) {
 function calcularEstatus(tipos, regTotal) {
   const tiposLower = tipos.map(t => t.toLowerCase());
   const hayBDD = tiposLower.some(t => t.includes('base de datos')) || regTotal > 0;
-  const hayCita = tiposLower.some(t => t.includes('cita') || t.includes('apertura'));
   if (hayBDD) return 'bdd';
-  if (hayCita) return 'cita';
   if (tipos.length) return 'visitada';
   return 'sin';
 }
