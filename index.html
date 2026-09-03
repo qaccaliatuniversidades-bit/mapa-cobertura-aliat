@@ -356,7 +356,7 @@ select.on{border-color:#f97316;color:#c2410c;background-color:#fff7ed;font-weigh
     <div class="stat"><div class="stat-n n-bdd" id="s-bdd">0</div><div class="stat-l">Visitada con BDD</div></div>
     <div class="stat"><div class="stat-n n-vis" id="s-vis">0</div><div class="stat-l">Visitadas sin BDD</div></div>
     <div class="stat"><div class="stat-n n-bdd" id="s-reg">0</div><div class="stat-l">BDD captada</div></div>
-    <div class="stat" title="Estimado: promedio BDD por escuela × total escuelas del universo filtrado"><div class="stat-n" style="color:#7c3aed" id="s-potencial">—</div><div class="stat-l">Potencial base</div></div>
+    <div class="stat" id="s-potencial-wrap" title="Estimado: promedio BDD por escuela × total escuelas del universo filtrado"><div class="stat-n" style="color:#7c3aed" id="s-potencial">—</div><div class="stat-l">Potencial base</div></div>
     <div class="stat" title="BDD captada ÷ potencial estimado del universo"><div class="stat-n" style="color:#0891b2" id="s-pct-bdd">—</div><div class="stat-l">Cob. BDD</div></div>
     <div class="stat"><div class="stat-n" id="s-pct">0%</div><div class="stat-l">% cobertura</div></div>
     <button id="btn-toggle-grafico" onclick="toggleVistaGrafico()"
@@ -932,10 +932,21 @@ const EMPRESA_ACTS_LIST = [
 // "Cita Inicial Apertura". NO adivina actividades distintas: si el texto normalizado no
 // coincide con ninguna del catálogo oficial, se queda fuera (no cuenta para BDD) a propósito.
 function normalizarTextoActividad(s) {
-  return sinAcentos((s || '').toLowerCase())
-    .replace(/[/\-_]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  let t = sinAcentos((s || '').toLowerCase());
+  // ETAPA 3: quita comillas sueltas (rectas o tipográficas) que a veces se cuelan en la
+  // captura manual (ej. '"Cita Inicial Apertura' en vez de 'Cita Inicial Apertura').
+  t = t.replace(/["'“”‘’]/g, '');
+  t = t.replace(/[/\-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  // ETAPA 3: corrige el typo de escribir la letra "o" en vez del dígito "0" dentro de un
+  // código numérico (ej. captura manual "Nom O35" en vez de "Nom 035"). Acotado a cuando la
+  // "o" está pegada a un dígito (antes o después, sin espacio de por medio) — nunca dentro de
+  // una palabra normal, porque ninguna actividad legítima del catálogo mezcla letras y dígitos
+  // así. Con solo lookahead (sin lookbehind) para máxima compatibilidad de navegador.
+  t = t.replace(/o(?=\d)/g, '0').replace(/(\d)o/g, '$10');
+  // ETAPA 3: homologa diferencias de ceros a la izquierda dentro de un mismo número (ej. "035"
+  // y "35" deben compararse igual), para que variantes como "NOM 35" y "NOM-035" coincidan.
+  t = t.replace(/\b0+(\d)/g, '$1');
+  return t;
 }
 function construirMapaHomologado(lista) {
   const mapa = {};
@@ -945,13 +956,39 @@ function construirMapaHomologado(lista) {
 const ESCUELA_ACTS_MAP = construirMapaHomologado(ESCUELA_ACTS_LIST);
 const EMPRESA_ACTS_MAP = construirMapaHomologado(EMPRESA_ACTS_LIST);
 
+// ETAPA 6.2: Homologaciones ADICIONALES confirmadas por el negocio (2026-09-01), para casos
+// donde la variante de captura NO es un problema de formato (mayúsculas/acentos/separadores,
+// ya resuelto por normalizarTextoActividad) sino de PALABRA (singular/plural). Se agregan como
+// entradas explícitas en el MISMO mapa que ya usa toda la app (ESCUELA_ACTS_MAP/EMPRESA_ACTS_MAP)
+// — no se crea una segunda fuente de verdad, y NO se modifica EMPRESA_ACTS_LIST/ESCUELA_ACTS_LIST
+// (el catálogo oficial sigue siendo el mismo). Cada línea homologa un texto capturado específico
+// hacia un nombre YA existente en el catálogo oficial.
+// Confirmado: "CONFERENCIA"/"Conferencia" (singular, registros de Empresa) cuentan como la
+// actividad oficial de Empresa "Conferencias". NO se aplica a Escuela (no fue confirmado ahí).
+EMPRESA_ACTS_MAP[normalizarTextoActividad('Conferencia')] = 'Conferencias';
+
+// ETAPA 6.2: Homologación de DISPLAY entre variantes de una misma actividad NO oficial. Estas
+// siguen sin pertenecer al catálogo oficial (nunca se agregan a EMPRESA_ACTS_LIST) y se siguen
+// mostrando con la leyenda "Actividad nueva / no encontrada en catálogo" — únicamente se evita
+// que dos formas de escribir el mismo concepto aparezcan como dos filas/categorías distintas.
+// Confirmado: "Llamada Empresa" y "Llamada a empresa" (Empresa) se unifican bajo el nombre
+// "Llamada a empresa". "Activación QR" en Empresa se deja SIN homologar a propósito (pendiente
+// de decisión del negocio) y sigue apareciendo como actividad nueva/no encontrada.
+const ALIAS_NUEVAS_EMPRESA = {};
+ALIAS_NUEVAS_EMPRESA[normalizarTextoActividad('Llamada Empresa')] = 'Llamada a empresa';
+ALIAS_NUEVAS_EMPRESA[normalizarTextoActividad('Llamada a empresa')] = 'Llamada a empresa';
+
 // Cuenta actividades BDD por grupo (Escuela vs Empresa) sobre un universo ya filtrado (vis).
 // Se cuenta por separado según el tipo REAL del registro, no solo por el texto de la actividad —
 // así "Módulo" de una escuela nunca se mezcla con "Módulo" de una empresa. Las variantes de
 // escritura de la misma actividad oficial se homologan (ver normalizarTextoActividad).
-// Todo lo que NO esté en el catálogo oficial se cuenta aparte como "sin confirmar" — así nunca
-// se pierde información (importante porque la captura es manual en otra app y a veces hay
-// errores de dedo), pero tampoco se mezcla a ciegas con las 12+8 oficiales sin confirmación.
+// Todo lo que NO esté en el catálogo oficial se cuenta aparte como "actividad nueva / no
+// encontrada en catálogo" — así nunca se pierde información (importante porque la captura es
+// manual en otra app y a veces hay errores de dedo o texto libre no contemplado), pero tampoco
+// se mezcla a ciegas con las 12+8 oficiales sin confirmación. ETAPA 6: se conserva el nombre
+// EXACTO capturado por el asesor (nunca se sustituye por "Por homologar" ni similar), y jamás
+// se agrega automáticamente a ESCUELA_ACTS_LIST/EMPRESA_ACTS_LIST — el catálogo oficial solo
+// cambia si alguien lo edita a mano en el código.
 function contarActividadesBDDPorGrupo(vis) {
   const countsEscuela = {}, countsEmpresa = {};
   const extraEscuela = {}, extraEmpresa = {};
@@ -960,15 +997,33 @@ function contarActividadesBDDPorGrupo(vis) {
     const destino = esEmpresa ? countsEmpresa : countsEscuela;
     const mapa = esEmpresa ? EMPRESA_ACTS_MAP : ESCUELA_ACTS_MAP;
     const extraDestino = esEmpresa ? extraEmpresa : extraEscuela;
-    (s.tipos||[]).forEach(t => {
+    // ETAPA 5: una actividad solo cuenta como realizada si tiene una fecha válida asociada
+    // (Fecha + Tipo son la pareja que define una actividad real). Cuando el registro trae el
+    // detalle por actividad (actividadesDetalle, con fecha propia por cada una — los cargados
+    // con el Excel de actividad), se usa ese detalle para filtrar por fecha válida. Si el
+    // registro no trae ese detalle (datos antiguos ya sincronizados antes de esta etapa, que
+    // solo tienen s.tipos sin fecha por actividad), se conserva el conteo anterior por s.tipos
+    // — para no perder de golpe actividad ya contabilizada de registros que aún no se han
+    // vuelto a cargar con el Excel de actividad.
+    const tiposAContar = (s.actividadesDetalle && s.actividadesDetalle.length)
+      ? s.actividadesDetalle.filter(a => a.fechaDate).map(a => a.tipo)
+      : (s.tipos || []);
+    tiposAContar.forEach(t => {
       if (!t) return;
       const norm = normalizarTextoActividad(t);
       const canonico = mapa[norm];
       if (canonico) {
         destino[canonico] = (destino[canonico]||0) + 1;
       } else {
-        if (!extraDestino[norm]) extraDestino[norm] = { label: t, count: 0 };
-        extraDestino[norm].count++;
+        // ETAPA 6.2: si esta actividad nueva/no oficial tiene un alias de DISPLAY confirmado
+        // (ver ALIAS_NUEVAS_EMPRESA), se agrupa bajo ese nombre unificado en vez de bajo su
+        // propio texto normalizado — sigue contando como "nueva/no encontrada", solo cambia
+        // cómo se etiqueta y se agrupa.
+        const aliasNueva = esEmpresa ? ALIAS_NUEVAS_EMPRESA[norm] : null;
+        const claveExtra = aliasNueva ? normalizarTextoActividad(aliasNueva) : norm;
+        const labelExtra = aliasNueva || t;
+        if (!extraDestino[claveExtra]) extraDestino[claveExtra] = { label: labelExtra, count: 0 };
+        extraDestino[claveExtra].count++;
       }
     });
   });
@@ -1001,6 +1056,7 @@ function contarBDDPorActividad(vis) {
     const mapa = esEmpresa ? EMPRESA_ACTS_MAP : ESCUELA_ACTS_MAP;
     s.actividadesDetalle.forEach(a => {
       if (!a.tipo) return;
+      if (!a.fechaDate) return; // ETAPA 5: misma regla de fecha válida que en contarActividadesBDDPorGrupo
       const canonico = mapa[normalizarTextoActividad(a.tipo)];
       if (canonico) destino[canonico] = (destino[canonico]||0) + (parseInt(a.registros)||0);
     });
@@ -1038,7 +1094,7 @@ function renderRankingAct(vis) {
     const nombre = label.length > 30 ? label.substring(0,28)+'…' : label;
     return `<div style="margin-bottom:9px;padding:0 14px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
-        <span style="font-size:11px;font-weight:500;color:#6b7280;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${label} (no está en el catálogo oficial de BDD — pendiente de confirmar)">${nombre}</span>
+        <span style="font-size:11px;font-weight:500;color:#6b7280;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${label} — Actividad nueva / no encontrada en el catálogo oficial">${nombre}</span>
         <span style="font-size:12px;font-weight:700;color:#9ca3af;margin-left:6px;flex-shrink:0">${count}</span>
       </div>
       <div style="height:4px;background:#f3f4f6;border-radius:3px;overflow:hidden">
@@ -1066,11 +1122,11 @@ function renderRankingAct(vis) {
     html += grupoEmpresa.map(renderFila).join('');
   }
   if (mostrarEscuela && extraEscuela.length) {
-    html += renderHeader('🔍 Escuela · sin confirmar', totalEscuelaExtra);
+    html += renderHeader('🆕 Escuela · actividad nueva / no encontrada', totalEscuelaExtra);
     html += extraEscuela.map(renderFilaExtra).join('');
   }
   if (mostrarEmpresa && extraEmpresa.length) {
-    html += renderHeader('🔍 Empresa · sin confirmar', totalEmpresaExtra);
+    html += renderHeader('🆕 Empresa · actividad nueva / no encontrada', totalEmpresaExtra);
     html += extraEmpresa.map(renderFilaExtra).join('');
   }
 
@@ -2125,6 +2181,85 @@ function posicionarTooltipInteligente(marker, markerSize) {
   if (tooltip._updatePosition) tooltip._updatePosition();
 }
 
+// ── ETAPA 2: EMPRESAS ÚNICAS (para el indicador Total General) ─────────────
+// Un registro es Empresa si s.tipoEntidad === 'Empresa' (mismo criterio que ya usa
+// el resto de la app, ej. filtros, ranking de actividades y dashboard). Los registros
+// de Escuela no traen 'Empresa' en ese campo (o no traen el campo, y se asumen Escuela
+// en el resto del código con `s.tipoEntidad || 'Escuela'`).
+// El catálogo de Empresas puede traer el mismo negocio duplicado como más de un registro
+// (verificado en los datos actuales: hay casos con el mismo nombre + mismo campus repetido).
+// Regla de negocio: MISMA EMPRESA + MISMO CAMPUS = 1 empresa · MISMA EMPRESA + CAMPUS
+// DISTINTO = empresas distintas. No existe todavía un id único de empresa en los datos,
+// así que se deduplica por nombre+campus normalizados (mayúsculas, sin espacios extra).
+// Una empresa con hasta 6 actividades sigue siendo 1 sola empresa: aquí no se cuentan
+// actividades, solo registros de Empresa distintos por nombre+campus.
+function getEmpresasUnicas(vis) {
+  const clavesUnicas = new Set();
+  vis.forEach(s => {
+    if (s.tipoEntidad !== 'Empresa') return;
+    const clave = (s.e || '').trim().toUpperCase() + '||' + (s.c || '').trim().toUpperCase();
+    clavesUnicas.add(clave);
+  });
+  return clavesUnicas.size;
+}
+
+// ── ETAPA 8.1: ESCUELAS ÚNICAS (mismo criterio que getEmpresasUnicas, sin tocarla) ──────────
+// Espejo exacto de getEmpresasUnicas pero para Escuela: mismo criterio de deduplicación
+// (nombre + campus normalizados). Todo lo que NO es 'Empresa' se trata como Escuela, igual que
+// en el resto de la app (`s.tipoEntidad || 'Escuela'`).
+function getEscuelasUnicas(vis) {
+  const clavesUnicas = new Set();
+  vis.forEach(s => {
+    if (s.tipoEntidad === 'Empresa') return;
+    const clave = (s.e || '').trim().toUpperCase() + '||' + (s.c || '').trim().toUpperCase();
+    clavesUnicas.add(clave);
+  });
+  return clavesUnicas.size;
+}
+
+// ── ETAPA 8.1: DESGLOSE DE LOS 8 INDICADORES A NIVEL DE ENTIDAD ÚNICA ───────────────────────
+// A diferencia de getEmpresasUnicas/getEscuelasUnicas (que solo cuentan cuántas entidades únicas
+// hay), esta función además clasifica cada entidad única por su MEJOR estatus (bdd > visitada >
+// sin — si una misma entidad tiene registros duplicados por nombre+campus, basta con que UNO
+// haya llegado a BDD para que la entidad completa cuente como "con BDD"), suma la BDD captada
+// real, y entrega los insumos para "Potencial base" (promedio de BDD por entidad única con datos
+// conocidos). Usa la MISMA clave de deduplicación que getEmpresasUnicas/getEscuelasUnicas, de
+// forma independiente, para no modificar esas dos funciones (cerradas en Etapas 2 y 8).
+// `esEmpresa` decide el tipo de entidad activo: true = Empresa, false = todo lo que no es
+// Empresa (Escuela). Por regla de negocio (ETAPA 8), "sin filtro de Tipo de entidad" se trata
+// igual que "Solo empresas" — quien llama a esta función decide eso pasando esEmpresa=true.
+function calcularIndicadoresPorTipo(vis, esEmpresa) {
+  const visTipo = vis.filter(s => esEmpresa ? s.tipoEntidad === 'Empresa' : s.tipoEntidad !== 'Empresa');
+  const rankEstatus = { sin: 0, visitada: 1, bdd: 2 };
+  const grupos = {};
+  let reg = 0;
+  visTipo.forEach(s => {
+    const clave = (s.e || '').trim().toUpperCase() + '||' + (s.c || '').trim().toUpperCase();
+    if (!grupos[clave]) grupos[clave] = { st: 'sin', reg: 0 };
+    if (rankEstatus[s.st] > rankEstatus[grupos[clave].st]) grupos[clave].st = s.st;
+    if (s.reg) {
+      const n = parseInt(s.reg);
+      if (!isNaN(n)) { grupos[clave].reg += n; reg += n; }
+    }
+  });
+  const valores = Object.values(grupos);
+  const total = valores.length;
+  const sin = valores.filter(g => g.st === 'sin').length;
+  const bdd = valores.filter(g => g.st === 'bdd').length;
+  const visitada = valores.filter(g => g.st === 'visitada').length;
+  const conRegConocido = valores.filter(g => g.reg > 0);
+  const promedioReg = conRegConocido.length >= 3
+    ? conRegConocido.reduce((a, g) => a + g.reg, 0) / conRegConocido.length
+    : null;
+  return {
+    total, sin, bdd, visitada,
+    conActividad: bdd + visitada,
+    reg,
+    entidadesConRegConocido: conRegConocido.length,
+    promedioReg
+  };
+}
+
 function render() {
   markers.forEach(m => map.removeLayer(m));
   markers = [];
@@ -2210,32 +2345,56 @@ function render() {
   });
 
   // Stats
-  const total = vis.length;
-  const bdd = vis.filter(s=>s.st==='bdd').length;
-  const vis2 = vis.filter(s=>s.st==='visitada').length;
+  // ETAPA 8.1: REGLA DE NEGOCIO DEL NEGOCIO — "Sin filtro de Tipo de entidad" se comporta como
+  // "Solo empresas" para los 8 indicadores del panel superior (confirmado explícitamente). Por
+  // eso esEmpresa es true tanto sin filtro como con filtro Empresa, y solo es false con filtro
+  // Escuela explícito. Los 8 indicadores ahora se calculan a nivel de ENTIDAD ÚNICA (mismo
+  // criterio nombre+campus que getEmpresasUnicas, ya usado desde la Etapa 2) en vez de por
+  // registro — ver calcularIndicadoresPorTipo(). getEmpresasUnicas() queda intacta y sigue
+  // dando exactamente el mismo número que aquí se usa como `total` cuando esEmpresa=true.
+  const esEmpresa = active.tipoEntidad !== 'Escuela';
+  const stats = calcularIndicadoresPorTipo(vis, esEmpresa);
+  const total = stats.total;
+  const bdd = stats.bdd;
+  const vis2 = stats.visitada;
+  const reg = stats.reg;
+  const cubierta = stats.conActividad;
+  const pct = total > 0 ? Math.round(cubierta/total*100) : 0;
+
+  // Potencial base: promedio de BDD por ENTIDAD ÚNICA (empresa o escuela, según el tipo activo)
+  // con reg conocido × total de entidades únicas del universo filtrado.
+  let potencial = 0;
+  let pctBDD = '—';
+  if (stats.promedioReg !== null) {
+    potencial = Math.round(stats.promedioReg * total);
+    pctBDD = potencial > 0 ? Math.round(reg / potencial * 100) + '%' : '—';
+  }
+
   // "Sin Actividad": si hay semana/año filtrado, "Total General" de arriba ya solo cuenta a
   // quienes tuvieron actividad esa semana (por diseño) — por lo que "Sin Actividad" no puede
   // medirse contra ese mismo universo (siempre daría 0). En su lugar, se mide contra el universo
-  // total asignado (mismos filtros de zona/campus/ejecutivo/etc., pero SIN el filtro de semana),
-  // como la cantidad que NO tuvo actividad en esa semana en particular. Sin semana filtrada, se
-  // mantiene el comportamiento de siempre: registros que nunca han tenido ninguna actividad.
-  const sin = (active.anio || active.semana)
-    ? getVisibleSinFiltroSemana().filter(s => !coincideSemanaAnio(s, active.anio, active.semana)).length
-    : vis.filter(s=>s.st==='sin').length;
-  let reg = 0;
-  vis.forEach(s=>{ if(s.reg){const n=parseInt(s.reg);if(!isNaN(n))reg+=n;}});
-  const cubierta = bdd + vis2;
-  const pct = total > 0 ? Math.round(cubierta/total*100) : 0;
-
-  // Potencial base: promedio BDD por escuela con reg conocido × total escuelas universo
-  const conReg = vis.filter(s=>s.reg && parseInt(s.reg)>0);
-  let potencial = 0;
-  let pctBDD = '—';
-  if (conReg.length >= 3) {
-    const sumReg = conReg.reduce((a,s)=>a+parseInt(s.reg),0);
-    const promedio = sumReg / conReg.length;
-    potencial = Math.round(promedio * total);
-    pctBDD = potencial > 0 ? Math.round(reg / potencial * 100) + '%' : '—';
+  // total asignado (mismos filtros de zona/campus/ejecutivo/etc., pero SIN el filtro de semana) —
+  // ESTO NO CAMBIÓ EN LA ETAPA 8.1 (getVisible/getVisibleSinFiltroSemana/coincideSemanaAnio
+  // siguen intactas; responde a una pregunta de negocio distinta y se conserva a propósito).
+  // ETAPA 8.1 solo le agrega, sobre ese mismo universo sin semana: (a) restringirlo primero al
+  // tipo de entidad activo (para que "sin filtro" tampoco mezcle escuelas aquí, igual que en el
+  // resto de los indicadores), y (b) deduplicar por entidad única — si CUALQUIERA de los
+  // registros duplicados de una misma entidad (nombre+campus) no tuvo actividad esa semana, la
+  // entidad cuenta como "sin actividad" (regla de negocio confirmada explícitamente).
+  // Sin semana filtrada, se mantiene el comportamiento normal: entidades únicas con estatus "sin".
+  let sin;
+  if (active.anio || active.semana) {
+    const visSinSemanaTipo = getVisibleSinFiltroSemana()
+      .filter(s => esEmpresa ? s.tipoEntidad === 'Empresa' : s.tipoEntidad !== 'Empresa');
+    const clavesSinActividad = new Set();
+    visSinSemanaTipo.forEach(s => {
+      if (!coincideSemanaAnio(s, active.anio, active.semana)) {
+        clavesSinActividad.add((s.e || '').trim().toUpperCase() + '||' + (s.c || '').trim().toUpperCase());
+      }
+    });
+    sin = clavesSinActividad.size;
+  } else {
+    sin = stats.sin;
   }
 
   renderPanel(selectedEntity ? [selectedEntity] : vis);
@@ -2256,6 +2415,11 @@ function render() {
   document.getElementById('s-vis').textContent = vis2.toLocaleString();
   document.getElementById('s-reg').textContent = reg.toLocaleString();
   document.getElementById('s-potencial').textContent = potencial > 0 ? '~' + potencial.toLocaleString() : '—';
+  // ETAPA 8.1: tooltip dinámico aprobado — dice "empresa" o "escuela" según el tipo activo
+  // (sin filtro se trata como Empresa, misma regla que el resto de los 8 indicadores).
+  document.getElementById('s-potencial-wrap').title = esEmpresa
+    ? 'Estimado: promedio de BDD por empresa con datos conocidos × total de empresas únicas del universo filtrado'
+    : 'Estimado: promedio de BDD por escuela con datos conocidos × total de escuelas únicas del universo filtrado';
   document.getElementById('s-pct-bdd').textContent = pctBDD;
   document.getElementById('s-pct').textContent = pct + '%';
 
@@ -2983,8 +3147,9 @@ function renderDashboardGrafica() {
   const sinActividad = vis.filter(s => s.st === 'sin').length;
 
   // Misma fuente de verdad que el ranking de actividades: catálogo oficial + lo que no calza
-  // (marcado como "sin confirmar"), para que el total refleje TODA la actividad capturada y no
-  // se sesgue por dejar fuera texto que no coincide exacto con el catálogo.
+  // (marcado como "actividad nueva / no encontrada"), para que el total refleje TODA la
+  // actividad capturada y no se sesgue por dejar fuera texto que no coincide exacto con el
+  // catálogo. ETAPA 6: se conserva el nombre capturado tal cual, solo se le añade la leyenda.
   const { grupoEscuela, grupoEmpresa, extraEscuela, extraEmpresa } = contarActividadesBDDPorGrupo(vis);
   // BDD real por actividad oficial (diferenciador: cuántas veces se hizo VS cuánta base trajo)
   const { bddEscuela, bddEmpresa } = contarBDDPorActividad(vis);
@@ -2992,8 +3157,8 @@ function renderDashboardGrafica() {
   const combinadas = [
     ...grupoEscuela.filter(([,c]) => c > 0).map(([tipo, count]) => ({ tipo, count, bdd: bddEscuela[tipo]||0, tieneBDD: true, grupo: 'Escuela' })),
     ...grupoEmpresa.filter(([,c]) => c > 0).map(([tipo, count]) => ({ tipo, count, bdd: bddEmpresa[tipo]||0, tieneBDD: true, grupo: 'Empresa' })),
-    ...extraEscuela.map(([tipo, count]) => ({ tipo: `${tipo} (sin confirmar)`, count, bdd: 0, tieneBDD: false, grupo: 'Extra' })),
-    ...extraEmpresa.map(([tipo, count]) => ({ tipo: `${tipo} (sin confirmar)`, count, bdd: 0, tieneBDD: false, grupo: 'Extra' }))
+    ...extraEscuela.map(([tipo, count]) => ({ tipo: `${tipo} (actividad nueva)`, count, bdd: 0, tieneBDD: false, grupo: 'Extra' })),
+    ...extraEmpresa.map(([tipo, count]) => ({ tipo: `${tipo} (actividad nueva)`, count, bdd: 0, tieneBDD: false, grupo: 'Extra' }))
   ].sort((a, b) => b.count - a.count);
 
   const totalActividades = combinadas.reduce((s, x) => s + x.count, 0);
@@ -3036,7 +3201,7 @@ function renderDashboardGrafica() {
         <div style="display:flex;gap:8px;font-size:9px;color:var(--muted);margin-bottom:-2px;flex-wrap:wrap">
           <span>🎓 <span style="color:#14b8a6;font-weight:700">■</span> Escuela</span>
           <span>🏢 <span style="color:#f59e0b;font-weight:700">■</span> Empresa</span>
-          <span>🔍 <span style="color:#9ca3af;font-weight:700">■</span> Sin confirmar</span>
+          <span>🆕 <span style="color:#9ca3af;font-weight:700">■</span> Actividad nueva / no en catálogo</span>
         </div>
         ${mejorPorBDD ? `<div style="background:#f8f7f4;border-radius:8px;padding:10px 12px">
           <div style="font-size:9px;color:var(--muted);font-weight:600;text-transform:uppercase;margin-bottom:3px">🏆 Más BDD genera</div>
